@@ -16,7 +16,7 @@ from codecforge.llm_client import (
     extract_json_object,
 )
 from codecforge.oracle import verify_codec
-from codecforge.runtime import decode_bytes
+from codecforge.runtime import decode_bytes, encode_obj
 from codecforge.schema import CodecSpec, FieldSpec
 from codecforge.synthesizer import synthesize_codec, synthesize_heuristic
 from tests.fixtures import (
@@ -170,3 +170,22 @@ def test_gemini_and_openai_http_payload_contracts(monkeypatch: pytest.MonkeyPatc
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     with pytest.raises(CodecForgeError):
         GeminiInteractionsProvider()
+
+
+def test_heuristic_synthesizes_with_empty_var_str_sample() -> None:
+    truth = CodecSpec(
+        name="empty_var",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="454D5031"),
+            FieldSpec(name="n", kind="scalar", scalar_type="u16le", length_of="s"),
+            FieldSpec(name="s", kind="var_str", length_field="n"),
+        ],
+    )
+    samples = [
+        encode_obj(truth, {"s": ""}),
+        encode_obj(truth, {"s": "hello"}),
+        encode_obj(truth, {"s": "world!"}),
+    ]
+    spec, oracle = synthesize_codec(samples, provider_name="heuristic", name="empty_var")
+    assert oracle.passed, oracle.failures
+    assert any(f.kind == "var_str" for f in spec.fields)

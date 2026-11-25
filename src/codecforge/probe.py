@@ -405,7 +405,7 @@ def detect_lengths(
                 (4, "u32be", ">I"),
                 (1, "u8", "<B"),
             ):
-                if rel + width >= min_seg_len:
+                if rel + width > min_seg_len:
                     continue
                 vals: list[int] = []
                 matched = True

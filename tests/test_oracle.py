@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 
 from codecforge.oracle import verify_codec
+from codecforge.runtime import encode_obj
 from codecforge.schema import CodecSpec, FieldSpec
 from tests.fixtures import (
     make_fixed_header_samples,
@@ -95,3 +96,20 @@ def test_oracle_gate3_catches_missing_count_of() -> None:
     assert not res.passed
     assert not res.gate3_mutation_passed
     assert any("Gate 3" in f for f in res.failures)
+
+
+def test_oracle_fixed_str_custom_pad_byte_58() -> None:
+    spec = CodecSpec(
+        name="xpad",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="58504144"),
+            FieldSpec(name="label", kind="fixed_str", size=8, pad_byte_hex="58"),
+            FieldSpec(name="code", kind="scalar", scalar_type="u16le"),
+        ],
+    )
+    samples = [
+        encode_obj(spec, {"label": "hi", "code": 1}),
+        encode_obj(spec, {"label": "there", "code": 2}),
+    ]
+    res = verify_codec(spec, samples)
+    assert res.passed, res.failures

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,6 +15,7 @@ from codecforge.codegen_py import generate_python_module
 from codecforge.report_html import generate_html_report
 from codecforge.schema import CodecSpec, FieldSpec
 from tests.fixtures import (
+    make_corrupt_samples,
     make_fixed_header_samples,
     make_net_packet_samples,
     make_rpg_save_samples,
@@ -21,12 +23,11 @@ from tests.fixtures import (
 )
 
 
-def _find_cpp20_compiler() -> str | None:
+def _find_cpp20_compiler() -> tuple[str, str] | None:
     for name in ("g++", "clang++"):
         exe = shutil.which(name)
         if not exe:
             continue
-        # Probe C++20 <span> support
         proc = subprocess.run(
             [exe, "-std=c++20", "-x", "c++", "-", "-fsyntax-only"],
             input=b"#include <span>\nint main() { return 0; }\n",
@@ -34,7 +35,19 @@ def _find_cpp20_compiler() -> str | None:
             timeout=10,
         )
         if proc.returncode == 0:
-            return exe
+            return ("gnu", exe)
+
+    if os.name == "nt":
+        candidates = [
+            Path(r"C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"),
+            Path(r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"),
+            Path(r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"),
+            Path(r"C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat"),
+            Path(r"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat"),
+        ]
+        for vcvars in candidates:
+            if vcvars.is_file():
+                return ("msvc", str(vcvars))
     return None
 
 
@@ -103,7 +116,7 @@ def test_generated_html_report_escapes_and_renders() -> None:
 
 
 def test_cpp_header_shadowing_safety_and_structure() -> None:
-    # Ensure field names like 'data', 'pos', 'size', 'crc', 'items' do not shadow _cf_ locals
+    # Ensure field names like 'data', 'pos', 'size', 'read_u8', 'crc32_ieee' do not shadow helpers
     shadow_spec = CodecSpec(
         name="shadow_test",
         endian="le",
@@ -112,66 +125,182 @@ def test_cpp_header_shadowing_safety_and_structure() -> None:
             FieldSpec(name="size", kind="scalar", scalar_type="u16le", length_of="data"),
             FieldSpec(name="data", kind="var_bytes", length_field="size"),
             FieldSpec(name="pos", kind="scalar", scalar_type="u32le"),
-            FieldSpec(name="crc", kind="scalar", scalar_type="u32le", crc32_of="magic..pos"),
+            FieldSpec(name="read_u8", kind="scalar", scalar_type="u8"),
+            FieldSpec(name="crc32_ieee", kind="scalar", scalar_type="u32le", crc32_of="magic..read_u8"),
         ],
     )
     hdr = generate_cpp_header(shadow_spec)
     assert "#pragma once" in hdr
+    assert "CODECFORGE_GEN_RUNTIME_HELPERS" in hdr
     assert "namespace codecforge_gen" in hdr
     assert "_cf_buf" in hdr
     assert "_cf_pos" in hdr
     assert "_cf_chunk_data" in hdr
-    assert "crc32_ieee" in hdr
-    assert "reinterpret_cast" not in hdr or "reinterpret_cast<const char*>" in hdr
+    assert "codecforge_gen::read_u8" in hdr
+    assert "codecforge_gen::crc32_ieee" in hdr
 
 
 def test_cpp20_compile_and_execute_if_available(tmp_path: Path) -> None:
-    compiler = _find_cpp20_compiler()
-    if compiler is None:
+    found = _find_cpp20_compiler()
+    if found is None:
         pytest.skip("No C++20 compiler with <span> available in environment")
+    kind, compiler_ref = found
 
-    samples, spec = make_rpg_save_samples()
-    hdr = generate_cpp_header(spec)
-    hdr_path = tmp_path / "rpg_save.hpp"
-    hdr_path.write_text(hdr, encoding="utf-8")
+    rpg_samples, rpg_spec = make_rpg_save_samples()
+    simple_samples, simple_spec = make_simple_save_samples()
+    net_samples, net_spec = make_net_packet_samples()
+    fixed_samples, fixed_spec = make_fixed_header_samples()
+    corrupt = make_corrupt_samples()
 
-    sample_path = tmp_path / "sample0.bin"
-    sample_path.write_bytes(samples[0])
+    shadow_spec = CodecSpec(
+        name="shadow_test",
+        endian="le",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="53484457"),
+            FieldSpec(name="size", kind="scalar", scalar_type="u64le", length_of="data"),
+            FieldSpec(name="data", kind="var_bytes", length_field="size"),
+            FieldSpec(name="pos", kind="scalar", scalar_type="u32le"),
+            FieldSpec(name="read_u8", kind="scalar", scalar_type="u8"),
+            FieldSpec(name="crc32_ieee", kind="scalar", scalar_type="u32le", crc32_of="magic..read_u8"),
+        ],
+    )
+
+    for spec in (rpg_spec, simple_spec, net_spec, fixed_spec, shadow_spec):
+        (tmp_path / f"{spec.name}.hpp").write_text(generate_cpp_header(spec), encoding="utf-8")
+
+    (tmp_path / "rpg.bin").write_bytes(rpg_samples[0])
+    (tmp_path / "simple.bin").write_bytes(simple_samples[0])
+    (tmp_path / "net.bin").write_bytes(net_samples[0])
+    (tmp_path / "fixed.bin").write_bytes(fixed_samples[0])
+    (tmp_path / "bad_magic.bin").write_bytes(corrupt["bad_magic"][0])
+    (tmp_path / "bad_crc.bin").write_bytes(corrupt["bad_crc"][0])
+    (tmp_path / "bad_fixed.bin").write_bytes(corrupt["non_canonical_fixed_str"][0])
+    (tmp_path / "bad_cstr.bin").write_bytes(corrupt["unterminated_cstr"][0])
 
     main_cpp = tmp_path / "main.cpp"
     main_cpp.write_text(
         """#include "rpg_save.hpp"
-#include <cassert>
+#include "simple_save.hpp"
+#include "net_packet.hpp"
+#include "fixed_header.hpp"
+#include "shadow_test.hpp"
 #include <fstream>
+#include <stdexcept>
 #include <vector>
 
-int main(int argc, char** argv) {
-    std::ifstream ifs(argv[1], std::ios::binary);
-    std::vector<std::uint8_t> raw((std::istreambuf_iterator<char>(ifs)),
-                                  std::istreambuf_iterator<char>());
-    auto obj = codecforge_gen::RpgSave::decode(raw);
-    auto repacked = codecforge_gen::RpgSave::encode(obj);
-    assert(repacked == raw);
-    obj.player_name = "MutatedCppPlayer";
-    obj.items.push_back({999u, 7u});
-    auto mut_bytes = codecforge_gen::RpgSave::encode(obj);
-    auto obj2 = codecforge_gen::RpgSave::decode(mut_bytes);
-    auto repacked2 = codecforge_gen::RpgSave::encode(obj2);
-    assert(repacked2 == mut_bytes);
-    assert(obj2.player_name == "MutatedCppPlayer");
-    assert(obj2.items.size() == 2);
+static std::vector<std::uint8_t> read_bin(const char* p) {
+    std::ifstream ifs(p, std::ios::binary);
+    return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(ifs)),
+                                     std::istreambuf_iterator<char>());
+}
+
+template <typename Fn>
+static bool expect_throws(Fn&& fn) {
+    try {
+        fn();
+        return false;
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+}
+
+int main(int, char** argv) {
+    // 1. rpg_save round-trip & mutation
+    {
+        auto raw = read_bin(argv[1]);
+        auto obj = codecforge_gen::RpgSave::decode(raw);
+        if (codecforge_gen::RpgSave::encode(obj) != raw) return 1;
+        obj.player_name = "MutatedCppPlayer";
+        obj.items.push_back({999u, 7u});
+        auto mut_bytes = codecforge_gen::RpgSave::encode(obj);
+        auto obj2 = codecforge_gen::RpgSave::decode(mut_bytes);
+        if (codecforge_gen::RpgSave::encode(obj2) != mut_bytes) return 2;
+        if (obj2.player_name != "MutatedCppPlayer" || obj2.items.size() != 2) return 3;
+    }
+    // 2. simple_save round-trip
+    {
+        auto raw = read_bin(argv[2]);
+        auto obj = codecforge_gen::SimpleSave::decode(raw);
+        if (codecforge_gen::SimpleSave::encode(obj) != raw) return 4;
+    }
+    // 3. net_packet BE round-trip & nested length backpatch
+    {
+        auto raw = read_bin(argv[3]);
+        auto obj = codecforge_gen::NetPacket::decode(raw);
+        if (codecforge_gen::NetPacket::encode(obj) != raw) return 5;
+        obj.payload = {1u, 2u, 3u, 4u, 5u};
+        obj.tag = "updated_tag";
+        auto mut_bytes = codecforge_gen::NetPacket::encode(obj);
+        auto obj2 = codecforge_gen::NetPacket::decode(mut_bytes);
+        if (codecforge_gen::NetPacket::encode(obj2) != mut_bytes) return 6;
+        if (obj2.body_len != 4u + 1u + 5u + 12u) return 7;
+    }
+    // 4. fixed_header round-trip
+    {
+        auto raw = read_bin(argv[4]);
+        auto obj = codecforge_gen::FixedHeader::decode(raw);
+        if (codecforge_gen::FixedHeader::encode(obj) != raw) return 8;
+    }
+    // 5. shadow_test encode/decode + u64le wraparound rejection
+    {
+        codecforge_gen::ShadowTest st{};
+        st.data = {0xAAu, 0xBBu, 0xCCu};
+        st.pos = 42u;
+        st.read_u8 = 7u;
+        auto packed = codecforge_gen::ShadowTest::encode(st);
+        auto unpacked = codecforge_gen::ShadowTest::decode(packed);
+        if (unpacked.size != 3u || unpacked.pos != 42u || unpacked.read_u8 != 7u) return 9;
+        // Corrupt size to 0xFFFFFFFFFFFFFFFF (overflow test for _cf_pos + _cf_len)
+        std::vector<std::uint8_t> overflow_buf = {'S','H','D','W', 0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF, 0x00};
+        if (!expect_throws([&]() { (void)codecforge_gen::ShadowTest::decode(overflow_buf); })) return 10;
+    }
+    // 6. Corrupt sample rejections
+    if (!expect_throws([&]() { (void)codecforge_gen::SimpleSave::decode(read_bin(argv[5])); })) return 11;
+    if (!expect_throws([&]() { (void)codecforge_gen::SimpleSave::decode(read_bin(argv[6])); })) return 12;
+    if (!expect_throws([&]() { (void)codecforge_gen::FixedHeader::decode(read_bin(argv[7])); })) return 13;
+    if (!expect_throws([&]() { (void)codecforge_gen::NetPacket::decode(read_bin(argv[8])); })) return 14;
     return 0;
 }
 """,
         encoding="utf-8",
     )
     exe_path = tmp_path / "test_cpp.exe"
-    comp = subprocess.run(
-        [compiler, "-std=c++20", "-Wall", "-Wextra", str(main_cpp), "-o", str(exe_path)],
+    if kind == "gnu":
+        comp = subprocess.run(
+            [compiler_ref, "-std=c++20", "-Wall", "-Wextra", "-Werror", str(main_cpp), "-o", str(exe_path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    else:
+        bat = tmp_path / "build.bat"
+        obj_path = tmp_path / "main.obj"
+        bat.write_text(
+            f'@echo off\ncall "{compiler_ref}" >nul\n'
+            f'cl /nologo /std:c++latest /EHsc /W4 /WX /Fo:"{obj_path}" "{main_cpp}" /Fe:"{exe_path}"\n',
+            encoding="utf-8",
+        )
+        comp = subprocess.run(
+            ["cmd", "/c", str(bat)],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    assert comp.returncode == 0, f"{comp.stdout}\n{comp.stderr}"
+    run = subprocess.run(
+        [
+            str(exe_path),
+            str(tmp_path / "rpg.bin"),
+            str(tmp_path / "simple.bin"),
+            str(tmp_path / "net.bin"),
+            str(tmp_path / "fixed.bin"),
+            str(tmp_path / "bad_magic.bin"),
+            str(tmp_path / "bad_crc.bin"),
+            str(tmp_path / "bad_fixed.bin"),
+            str(tmp_path / "bad_cstr.bin"),
+        ],
         capture_output=True,
-        text=True,
-        timeout=30,
+        timeout=10,
     )
-    assert comp.returncode == 0, comp.stderr
-    run = subprocess.run([str(exe_path), str(sample_path)], capture_output=True, timeout=10)
-    assert run.returncode == 0
+    assert run.returncode == 0, f"C++ test binary exited with {run.returncode}"

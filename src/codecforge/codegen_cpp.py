@@ -49,9 +49,20 @@ def _cpp_prelude() -> str:
 
 namespace codecforge_gen {
 
+#ifndef CODECFORGE_GEN_RUNTIME_HELPERS
+#define CODECFORGE_GEN_RUNTIME_HELPERS
+
 inline void _cf_require(bool cond, const char* msg) {
     if (!cond) {
         throw std::runtime_error(msg);
+    }
+}
+
+inline void _cf_check_ascii(const std::string& s, const char* field_name) {
+    for (char ch : s) {
+        if (static_cast<std::uint8_t>(ch) > 0x7Fu) {
+            throw std::runtime_error(std::string("Invalid ASCII in ") + field_name);
+        }
     }
 }
 
@@ -366,6 +377,8 @@ inline void write_f64be(std::vector<std::uint8_t>& out, double v) {
     std::memcpy(&u, &v, sizeof(u));
     write_u64be(out, u);
 }
+
+#endif  // CODECFORGE_GEN_RUNTIME_HELPERS
 """
 
 
@@ -418,6 +431,7 @@ def _emit_struct(
     lines.append(f"        {struct_name} _cf_obj{{}};")
     for f in fields:
         lines.append(f"        const std::size_t _cf_start_{f.name} = _cf_pos;")
+        str_check_fn = "_cf_check_ascii" if f.encoding.lower() == "ascii" else "_cf_check_utf8"
         if f.kind == "magic":
             raw_bytes = bytes.fromhex(f.magic_hex or "")
             hex_list = ", ".join(f"0x{b:02X}u" for b in raw_bytes)
@@ -426,23 +440,25 @@ def _emit_struct(
                 f"_cf_magic_{f.name}{{{hex_list}}};"
             )
             lines.append(
-                f'        _cf_require(_cf_pos + {len(raw_bytes)} <= _cf_buf.size(), "Truncated magic {f.name}");'
+                f'        codecforge_gen::_cf_require(_cf_buf.size() - _cf_pos >= {len(raw_bytes)}, "Truncated magic {f.name}");'
             )
             lines.append(
                 f"        for (std::size_t _cf_i = 0; _cf_i < {len(raw_bytes)}; ++_cf_i) {{"
             )
             lines.append(
-                f'            _cf_require(_cf_buf[_cf_pos + _cf_i] == _cf_magic_{f.name}[_cf_i], "Magic mismatch on {f.name}");'
+                f'            codecforge_gen::_cf_require(_cf_buf[_cf_pos + _cf_i] == _cf_magic_{f.name}[_cf_i], "Magic mismatch on {f.name}");'
             )
             lines.append("        }")
             lines.append(f"        _cf_pos += {len(raw_bytes)};")
         elif f.kind == "scalar":
             assert f.scalar_type is not None
-            lines.append(f"        _cf_obj.{f.name} = read_{f.scalar_type}(_cf_buf, _cf_pos);")
+            lines.append(
+                f"        _cf_obj.{f.name} = codecforge_gen::read_{f.scalar_type}(_cf_buf, _cf_pos);"
+            )
         elif f.kind == "fixed_bytes":
             assert f.size is not None
             lines.append(
-                f'        _cf_require(_cf_pos + {f.size} <= _cf_buf.size(), "Truncated fixed_bytes {f.name}");'
+                f'        codecforge_gen::_cf_require(_cf_buf.size() - _cf_pos >= {f.size}, "Truncated fixed_bytes {f.name}");'
             )
             lines.append(
                 f"        _cf_obj.{f.name}.assign(_cf_buf.begin() + static_cast<std::ptrdiff_t>(_cf_pos), "
@@ -453,7 +469,7 @@ def _emit_struct(
             assert f.size is not None
             pad_byte = bytes.fromhex(f.pad_byte_hex)[0]
             lines.append(
-                f'        _cf_require(_cf_pos + {f.size} <= _cf_buf.size(), "Truncated fixed_str {f.name}");'
+                f'        codecforge_gen::_cf_require(_cf_buf.size() - _cf_pos >= {f.size}, "Truncated fixed_str {f.name}");'
             )
             lines.append(f"        std::size_t _cf_pad_{f.name} = {f.size};")
             lines.append(
@@ -470,14 +486,14 @@ def _emit_struct(
                 f"        for (std::size_t _cf_i = _cf_pad_{f.name}; _cf_i < {f.size}; ++_cf_i) {{"
             )
             lines.append(
-                f'            _cf_require(_cf_buf[_cf_pos + _cf_i] == 0x{pad_byte:02X}u, "Non-canonical padding in {f.name}");'
+                f'            codecforge_gen::_cf_require(_cf_buf[_cf_pos + _cf_i] == 0x{pad_byte:02X}u, "Non-canonical padding in {f.name}");'
             )
             lines.append("        }")
             lines.append(
                 f"        _cf_obj.{f.name}.assign(reinterpret_cast<const char*>(_cf_buf.data() + _cf_pos), "
                 f"_cf_pad_{f.name});"
             )
-            lines.append(f'        _cf_check_utf8(_cf_obj.{f.name}, "{f.name}");')
+            lines.append(f'        codecforge_gen::{str_check_fn}(_cf_obj.{f.name}, "{f.name}");')
             lines.append(f"        _cf_pos += {f.size};")
         elif f.kind == "cstr":
             lines.append(f"        std::size_t _cf_nul_{f.name} = _cf_pos;")
@@ -487,13 +503,13 @@ def _emit_struct(
             lines.append(f"            ++_cf_nul_{f.name};")
             lines.append("        }")
             lines.append(
-                f'        _cf_require(_cf_nul_{f.name} < _cf_buf.size(), "Unterminated cstr {f.name}");'
+                f'        codecforge_gen::_cf_require(_cf_nul_{f.name} < _cf_buf.size(), "Unterminated cstr {f.name}");'
             )
             lines.append(
                 f"        _cf_obj.{f.name}.assign(reinterpret_cast<const char*>(_cf_buf.data() + _cf_pos), "
                 f"_cf_nul_{f.name} - _cf_pos);"
             )
-            lines.append(f'        _cf_check_utf8(_cf_obj.{f.name}, "{f.name}");')
+            lines.append(f'        codecforge_gen::{str_check_fn}(_cf_obj.{f.name}, "{f.name}");')
             lines.append(f"        _cf_pos = _cf_nul_{f.name} + 1;")
         elif f.kind == "var_str":
             assert f.length_field is not None
@@ -501,13 +517,13 @@ def _emit_struct(
                 f"        const std::size_t _cf_len_{f.name} = static_cast<std::size_t>(_cf_obj.{f.length_field});"
             )
             lines.append(
-                f'        _cf_require(_cf_pos + _cf_len_{f.name} <= _cf_buf.size(), "Truncated var_str {f.name}");'
+                f'        codecforge_gen::_cf_require(_cf_len_{f.name} <= _cf_buf.size() - _cf_pos, "Truncated var_str {f.name}");'
             )
             lines.append(
                 f"        _cf_obj.{f.name}.assign(reinterpret_cast<const char*>(_cf_buf.data() + _cf_pos), "
                 f"_cf_len_{f.name});"
             )
-            lines.append(f'        _cf_check_utf8(_cf_obj.{f.name}, "{f.name}");')
+            lines.append(f'        codecforge_gen::{str_check_fn}(_cf_obj.{f.name}, "{f.name}");')
             lines.append(f"        _cf_pos += _cf_len_{f.name};")
         elif f.kind == "var_bytes":
             assert f.length_field is not None
@@ -515,7 +531,7 @@ def _emit_struct(
                 f"        const std::size_t _cf_len_{f.name} = static_cast<std::size_t>(_cf_obj.{f.length_field});"
             )
             lines.append(
-                f'        _cf_require(_cf_pos + _cf_len_{f.name} <= _cf_buf.size(), "Truncated var_bytes {f.name}");'
+                f'        codecforge_gen::_cf_require(_cf_len_{f.name} <= _cf_buf.size() - _cf_pos, "Truncated var_bytes {f.name}");'
             )
             lines.append(
                 f"        _cf_obj.{f.name}.assign(_cf_buf.begin() + static_cast<std::ptrdiff_t>(_cf_pos), "
@@ -533,7 +549,12 @@ def _emit_struct(
             lines.append(
                 f"        const std::size_t _cf_cnt_{f.name} = static_cast<std::size_t>(_cf_obj.{f.count_field});"
             )
-            lines.append(f"        _cf_obj.{f.name}.reserve(_cf_cnt_{f.name});")
+            lines.append(
+                f"        const std::size_t _cf_rem_{f.name} = _cf_buf.size() - _cf_pos;"
+            )
+            lines.append(
+                f"        _cf_obj.{f.name}.reserve(_cf_cnt_{f.name} < _cf_rem_{f.name} ? _cf_cnt_{f.name} : _cf_rem_{f.name});"
+            )
             lines.append(
                 f"        for (std::size_t _cf_i = 0; _cf_i < _cf_cnt_{f.name}; ++_cf_i) {{"
             )
@@ -555,15 +576,17 @@ def _emit_struct(
                     f"_cf_buf.begin() + static_cast<std::ptrdiff_t>(_cf_end_{t}));"
                 )
             lines.append(
-                f"        const std::uint32_t _cf_expected_{f.name} = crc32_ieee(_cf_cov_{f.name});"
+                f"        const std::uint32_t _cf_expected_{f.name} = codecforge_gen::crc32_ieee(_cf_cov_{f.name});"
             )
             lines.append(
-                f'        _cf_require(static_cast<std::uint32_t>(_cf_obj.{f.name}) == _cf_expected_{f.name}, '
+                f'        codecforge_gen::_cf_require(static_cast<std::uint32_t>(_cf_obj.{f.name}) == _cf_expected_{f.name}, '
                 f'"CRC32 mismatch on {f.name}");'
             )
 
     if is_root:
-        lines.append('        _cf_require(_cf_pos == _cf_buf.size(), "Unconsumed trailing bytes");')
+        lines.append(
+            '        codecforge_gen::_cf_require(_cf_pos == _cf_buf.size(), "Unconsumed trailing bytes");'
+        )
 
     lines.append("        return _cf_obj;")
     lines.append("    }")
@@ -579,6 +602,7 @@ def _emit_struct(
 
     # Pass 1
     for f in fields:
+        str_check_fn = "_cf_check_ascii" if f.encoding.lower() == "ascii" else "_cf_check_utf8"
         if f.kind == "magic":
             raw_bytes = bytes.fromhex(f.magic_hex or "")
             hex_list = ", ".join(f"0x{b:02X}u" for b in raw_bytes)
@@ -588,30 +612,33 @@ def _emit_struct(
             if f.count_of is not None:
                 max_v = UNSIGNED_MAX[f.scalar_type]
                 lines.append(
-                    f'        _cf_require(_cf_obj.{f.count_of}.size() <= {max_v}ULL, '
+                    f'        codecforge_gen::_cf_require(_cf_obj.{f.count_of}.size() <= {max_v}ULL, '
                     f'"Array {f.count_of} exceeds {f.scalar_type} max");'
                 )
                 lines.append(
-                    f"        write_{f.scalar_type}(_cf_chunk_{f.name}, "
+                    f"        codecforge_gen::write_{f.scalar_type}(_cf_chunk_{f.name}, "
                     f"static_cast<{_CPP_SCALAR_TYPE[f.scalar_type]}>(_cf_obj.{f.count_of}.size()));"
                 )
             elif f.length_of is None and f.crc32_of is None:
-                lines.append(f"        write_{f.scalar_type}(_cf_chunk_{f.name}, _cf_obj.{f.name});")
+                lines.append(
+                    f"        codecforge_gen::write_{f.scalar_type}(_cf_chunk_{f.name}, _cf_obj.{f.name});"
+                )
         elif f.kind == "fixed_bytes":
             assert f.size is not None
             lines.append(
-                f'        _cf_require(_cf_obj.{f.name}.size() == {f.size}, "fixed_bytes {f.name} size mismatch");'
+                f'        codecforge_gen::_cf_require(_cf_obj.{f.name}.size() == {f.size}, "fixed_bytes {f.name} size mismatch");'
             )
             lines.append(f"        _cf_chunk_{f.name} = _cf_obj.{f.name};")
         elif f.kind == "fixed_str":
             assert f.size is not None
             pad_byte = bytes.fromhex(f.pad_byte_hex)[0]
+            lines.append(f'        codecforge_gen::{str_check_fn}(_cf_obj.{f.name}, "{f.name}");')
             lines.append(
-                f'        _cf_require(_cf_obj.{f.name}.size() <= {f.size}, "fixed_str {f.name} exceeds size");'
+                f'        codecforge_gen::_cf_require(_cf_obj.{f.name}.size() <= {f.size}, "fixed_str {f.name} exceeds size");'
             )
             lines.append(f"        for (char _cf_ch : _cf_obj.{f.name}) {{")
             lines.append(
-                f'            _cf_require(static_cast<std::uint8_t>(_cf_ch) != 0x{pad_byte:02X}u, '
+                f'            codecforge_gen::_cf_require(static_cast<std::uint8_t>(_cf_ch) != 0x{pad_byte:02X}u, '
                 f'"fixed_str {f.name} contains pad byte");'
             )
             lines.append("        }")
@@ -626,9 +653,10 @@ def _emit_struct(
             )
             lines.append("        }")
         elif f.kind == "cstr":
+            lines.append(f'        codecforge_gen::{str_check_fn}(_cf_obj.{f.name}, "{f.name}");')
             lines.append(f"        for (char _cf_ch : _cf_obj.{f.name}) {{")
             lines.append(
-                f'            _cf_require(_cf_ch != \'\\0\', "cstr {f.name} contains embedded NUL");'
+                f'            codecforge_gen::_cf_require(_cf_ch != \'\\0\', "cstr {f.name} contains embedded NUL");'
             )
             lines.append("        }")
             lines.append(
@@ -636,6 +664,7 @@ def _emit_struct(
             )
             lines.append(f"        _cf_chunk_{f.name}.push_back(0u);")
         elif f.kind == "var_str":
+            lines.append(f'        codecforge_gen::{str_check_fn}(_cf_obj.{f.name}, "{f.name}");')
             lines.append(
                 f"        _cf_chunk_{f.name}.assign(_cf_obj.{f.name}.begin(), _cf_obj.{f.name}.end());"
             )
@@ -665,12 +694,12 @@ def _emit_struct(
             max_v = UNSIGNED_MAX[f.scalar_type]
             lines.append(f"        const std::size_t _cf_len_{f.name} = {sum_expr};")
             lines.append(
-                f'        _cf_require(_cf_len_{f.name} <= {max_v}ULL, '
+                f'        codecforge_gen::_cf_require(_cf_len_{f.name} <= {max_v}ULL, '
                 f'"length_of {f.name} exceeds {f.scalar_type} max");'
             )
             lines.append(f"        _cf_chunk_{f.name}.clear();")
             lines.append(
-                f"        write_{f.scalar_type}(_cf_chunk_{f.name}, "
+                f"        codecforge_gen::write_{f.scalar_type}(_cf_chunk_{f.name}, "
                 f"static_cast<{_CPP_SCALAR_TYPE[f.scalar_type]}>(_cf_len_{f.name}));"
             )
 
@@ -686,10 +715,10 @@ def _emit_struct(
                     f"_cf_chunk_{t}.begin(), _cf_chunk_{t}.end());"
                 )
             lines.append(
-                f"        const std::uint32_t _cf_crc_{f.name} = crc32_ieee(_cf_cov_{f.name});"
+                f"        const std::uint32_t _cf_crc_{f.name} = codecforge_gen::crc32_ieee(_cf_cov_{f.name});"
             )
             lines.append(
-                f"        write_{f.scalar_type}(_cf_chunk_{f.name}, _cf_crc_{f.name});"
+                f"        codecforge_gen::write_{f.scalar_type}(_cf_chunk_{f.name}, _cf_crc_{f.name});"
             )
 
     lines.append("        std::vector<std::uint8_t> _cf_out;")

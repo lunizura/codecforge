@@ -190,6 +190,11 @@ def synthesize_heuristic(
         elif seg.kind == "fixed_var":
             assert seg.fixed_size is not None
             reserved_cand = seg_len_map.get(idx + 1)
+            if (
+                reserved_cand is not None
+                and reserved_cand.sample0_offset >= seg.sample_slices[0][1]
+            ):
+                reserved_cand = None
             reserved_tail = reserved_cand.width if reserved_cand is not None else 0
             prefix_size = seg.fixed_size - reserved_tail
             if prefix_size < 0:

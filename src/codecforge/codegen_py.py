@@ -169,6 +169,8 @@ def _encode_fields(fields: list[dict[str, Any]], obj: dict[str, Any]) -> bytes:
         elif kind == "scalar":
             if f.get("count_of"):
                 items = obj[f["count_of"]]
+                if not isinstance(items, list):
+                    raise ValueError(f"count_of target '{{f['count_of']}}' must be a list")
                 chunks[name] = _pack_scalar(f, len(items))
             elif f.get("length_of") or f.get("crc32_of"):
                 chunks[name] = b""

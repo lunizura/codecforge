@@ -66,11 +66,15 @@ def _mutate_fields(fields: list[FieldSpec], target_dict: dict[str, Any]) -> None
         elif f.kind == "fixed_str":
             assert f.size is not None
             s = str(target_dict[f.name])
+            pad_val = bytes.fromhex(f.pad_byte_hex)[0]
             raw = s.encode(f.encoding)
             if len(raw) < f.size:
-                target_dict[f.name] = s + "X"
+                append_ch = next(c for c in ("X", "Y", "Z") if ord(c) != pad_val)
+                target_dict[f.name] = s + append_ch
             else:
-                replacement = "Z" if not s.startswith("Z") else "A"
+                replacement = next(
+                    c for c in ("Z", "A", "B") if ord(c) != pad_val and not s.startswith(c)
+                )
                 candidate = replacement + s[1:]
                 if len(candidate.encode(f.encoding)) <= f.size:
                     target_dict[f.name] = candidate

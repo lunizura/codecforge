@@ -13,6 +13,8 @@ from codecforge.probe import (
     shannon_entropy,
     sliding_entropy,
 )
+from codecforge.runtime import encode_obj
+from codecforge.schema import CodecSpec, FieldSpec
 from tests.fixtures import (
     make_fixed_header_samples,
     make_net_packet_samples,
@@ -101,3 +103,28 @@ def test_probe_fixed_header_and_prompt_summary() -> None:
 
     with pytest.raises(CodecForgeError):
         probe_samples([fixed_samples[0]])
+
+
+def test_detect_lengths_rule1b_with_empty_var_str() -> None:
+    spec = CodecSpec(
+        name="empty_var",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="454D5031"),
+            FieldSpec(name="n", kind="scalar", scalar_type="u16le", length_of="s"),
+            FieldSpec(name="s", kind="var_str", length_field="n"),
+        ],
+    )
+    samples = [
+        encode_obj(spec, {"s": ""}),
+        encode_obj(spec, {"s": "hello"}),
+        encode_obj(spec, {"s": "world!"}),
+    ]
+    segs = align_samples(samples)
+    lens = detect_lengths(samples, segs)
+    assert any(
+        c.target_kind == "segment_index"
+        and c.target_segment_index == 1
+        and c.scalar_type == "u16le"
+        and c.sample0_offset == 4
+        for c in lens
+    )
