@@ -145,3 +145,32 @@ def test_oracle_gate3_catches_inner_array_bug_when_sample0_array_empty() -> None
     assert res.gate1_roundtrip_passed
     assert not res.gate3_mutation_passed
     assert any("Gate 3" in f for f in res.failures)
+
+
+def test_oracle_gate3_catches_missing_count_of_when_all_sample_arrays_empty() -> None:
+    good_spec = CodecSpec(
+        name="all_empty_arr",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="454D5032"),
+            FieldSpec(name="cnt", kind="scalar", scalar_type="u8", count_of="items"),
+            FieldSpec(
+                name="items",
+                kind="array",
+                count_field="cnt",
+                item_fields=[FieldSpec(name="val", kind="scalar", scalar_type="u16le")],
+            ),
+        ],
+    )
+    samples = [
+        encode_obj(good_spec, {"items": []}),
+        encode_obj(good_spec, {"items": []}),
+    ]
+    assert verify_codec(good_spec, samples).passed
+
+    bad_spec = copy.deepcopy(good_spec)
+    bad_spec.fields[1].count_of = None
+    res = verify_codec(bad_spec, samples)
+    assert not res.passed
+    assert res.gate1_roundtrip_passed
+    assert not res.gate3_mutation_passed
+    assert any("Gate 3" in f for f in res.failures)

@@ -39,11 +39,41 @@ class OracleResult:
         }
 
 
+def _default_item_for_fields(fields: list[FieldSpec]) -> dict[str, Any]:
+    item: dict[str, Any] = {}
+    for f in fields:
+        if f.kind == "magic":
+            continue
+        if f.kind == "scalar":
+            if f.length_of or f.count_of or f.crc32_of:
+                continue
+            assert f.scalar_type is not None
+            if f.scalar_type in UNSIGNED_MAX or f.scalar_type in SIGNED_BOUNDS:
+                item[f.name] = 1
+            else:
+                item[f.name] = 1.25
+        elif f.kind == "fixed_bytes":
+            assert f.size is not None
+            item[f.name] = b"\x01" * f.size
+        elif f.kind == "fixed_str":
+            assert f.size is not None
+            pad_val = bytes.fromhex(f.pad_byte_hex)[0]
+            item[f.name] = "a" if ord("a") != pad_val else "b"
+        elif f.kind in ("cstr", "var_str"):
+            item[f.name] = "cf_item"
+        elif f.kind in ("var_bytes", "bytes_rest"):
+            item[f.name] = b"\x01\x02"
+        elif f.kind == "array":
+            item[f.name] = [_default_item_for_fields(f.item_fields)]
+    return item
+
+
 def _mutate_fields(
     fields: list[FieldSpec],
     target_dict: dict[str, Any],
     fallback_dicts: list[dict[str, Any]] | None = None,
 ) -> None:
+    field_by_name = {f.name: f for f in fields}
     for f in fields:
         if f.kind == "magic":
             continue
@@ -92,6 +122,10 @@ def _mutate_fields(
         elif f.kind == "array":
             arr = target_dict[f.name]
             if isinstance(arr, list):
+                assert f.count_field is not None
+                cnt_scalar = field_by_name[f.count_field].scalar_type
+                assert cnt_scalar is not None
+                max_cnt = UNSIGNED_MAX[cnt_scalar]
                 exemplar: dict[str, Any] | None = None
                 if len(arr) > 0:
                     exemplar = arr[0]
@@ -101,13 +135,21 @@ def _mutate_fields(
                         if isinstance(fb_arr, list) and len(fb_arr) > 0:
                             exemplar = fb_arr[0]
                             break
-                if exemplar is not None:
+                if exemplar is None:
+                    exemplar = _default_item_for_fields(f.item_fields)
+                if len(arr) + 2 <= max_cnt:
                     cloned1 = copy.deepcopy(exemplar)
                     _mutate_fields(f.item_fields, cloned1)
                     cloned2 = copy.deepcopy(cloned1)
                     _mutate_fields(f.item_fields, cloned2)
                     arr.append(cloned1)
                     arr.append(cloned2)
+                elif len(arr) + 1 <= max_cnt:
+                    cloned1 = copy.deepcopy(exemplar)
+                    _mutate_fields(f.item_fields, cloned1)
+                    arr.append(cloned1)
+                elif len(arr) > 0:
+                    arr.pop()
 
 
 def _compare_non_derived(

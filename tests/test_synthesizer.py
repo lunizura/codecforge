@@ -189,3 +189,27 @@ def test_heuristic_synthesizes_with_empty_var_str_sample() -> None:
     spec, oracle = synthesize_codec(samples, provider_name="heuristic", name="empty_var")
     assert oracle.passed, oracle.failures
     assert any(f.kind == "var_str" for f in spec.fields)
+
+
+def test_heuristic_synthesizes_nested_remaining_body_and_inner_var_str() -> None:
+    truth = CodecSpec(
+        name="nested_len_fmt",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="464D5431"),
+            FieldSpec(name="body_len", kind="scalar", scalar_type="u32le", length_of="flags..name"),
+            FieldSpec(name="flags", kind="scalar", scalar_type="u16le"),
+            FieldSpec(name="name_len", kind="scalar", scalar_type="u16le", length_of="name"),
+            FieldSpec(name="name", kind="var_str", length_field="name_len"),
+            FieldSpec(name="crc", kind="scalar", scalar_type="u32le", crc32_of="magic..name"),
+        ],
+    )
+    samples = [
+        encode_obj(truth, {"flags": 1, "name": "alice_long_username_01"}),
+        encode_obj(truth, {"flags": 2, "name": "bob_longer_username_002"}),
+        encode_obj(truth, {"flags": 3, "name": "charlie_longest_username_003"}),
+    ]
+    spec, oracle = synthesize_codec(samples, provider_name="heuristic", name="nested_len_fmt")
+    assert oracle.passed, oracle.failures
+    assert any(f.kind == "var_str" for f in spec.fields)
+    assert sum(1 for f in spec.fields if f.length_of is not None) == 2
+    assert spec.fields[-1].crc32_of is not None

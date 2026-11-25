@@ -152,9 +152,15 @@ def _pack_scalar(f: dict[str, Any], val: Any) -> bytes:
             if val < lo or val > hi:
                 raise ValueError(f"Scalar '{{f['name']}}' out of signed bounds")
     else:
-        if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(float(val)):
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
             raise ValueError(f"Scalar '{{f['name']}}' expects finite float")
-        val = float(val)
+        try:
+            fval = float(val)
+        except OverflowError as exc:
+            raise ValueError(f"Failed packing scalar '{{f['name']}}': {{exc}}") from exc
+        if not math.isfinite(fval):
+            raise ValueError(f"Scalar '{{f['name']}}' expects finite float")
+        val = fval
     try:
         return struct.pack(fmt, val)
     except (struct.error, OverflowError) as exc:
@@ -253,6 +259,8 @@ def _encode_fields(fields: list[dict[str, Any]], obj: dict[str, Any]) -> bytes:
 
 
 def decode(data: bytes) -> dict[str, Any]:
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        raise ValueError("Input data must be bytes-like")
     buf = bytes(data)
     out, pos = _decode_fields(SPEC_DICT["fields"], buf, 0)
     if pos != len(buf):

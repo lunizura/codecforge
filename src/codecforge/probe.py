@@ -337,8 +337,7 @@ def detect_lengths(
         for s in samples
     ]
     candidates: list[LengthRelationCandidate] = []
-    rule1a_byte_offsets: set[int] = set()
-    claimed_sample0_offsets: set[int] = set()
+    rule1_byte_offsets: set[int] = set()
 
     # Rule 1a: Adjacent preceding length prefix before a shifted_var segment
     for j in range(1, len(segments)):
@@ -370,8 +369,7 @@ def detect_lengths(
                     break
             if matched:
                 s0_off = prev.sample_slices[0][1] - width
-                rule1a_byte_offsets.update(range(s0_off, s0_off + width))
-                claimed_sample0_offsets.add(s0_off)
+                rule1_byte_offsets.update(range(s0_off, s0_off + width))
                 candidates.append(
                     LengthRelationCandidate(
                         sample0_offset=s0_off,
@@ -384,6 +382,7 @@ def detect_lengths(
                 break
 
     # Rule 1b: Embedded length prefix inside the fixed-offset head of a shifted_var segment
+    # Prefer the innermost (largest rel) match so outer remaining-body frame lengths stay for Rule 2.
     for j, seg in enumerate(segments):
         if seg.kind != "shifted_var":
             continue
@@ -393,10 +392,14 @@ def detect_lengths(
         if len(set(seg_lens)) < 2:
             continue
         min_seg_len = min(seg_lens)
-        found_embedded = False
+        best_embedded: LengthRelationCandidate | None = None
+        best_rel = 0
+        best_end = 0
         for rel in range(min_seg_len):
+            if rel < best_end:
+                continue
             s0_off = seg.sample_slices[0][0] + rel
-            if s0_off in claimed_sample0_offsets:
+            if s0_off in rule1_byte_offsets:
                 continue
             for width, st, fmt in (
                 (2, "u16le", "<H"),
@@ -406,6 +409,8 @@ def detect_lengths(
                 (1, "u8", "<B"),
             ):
                 if rel + width > min_seg_len:
+                    continue
+                if any(b in rule1_byte_offsets for b in range(s0_off, s0_off + width)):
                     continue
                 vals: list[int] = []
                 matched = True
@@ -417,20 +422,25 @@ def detect_lengths(
                         break
                     vals.append(val)
                 if matched and len(set(vals)) >= 2:
-                    claimed_sample0_offsets.add(s0_off)
-                    candidates.append(
-                        LengthRelationCandidate(
-                            sample0_offset=s0_off,
-                            width=width,
-                            scalar_type=st,  # type: ignore[arg-type]
-                            target_kind="segment_index",
-                            target_segment_index=j,
-                        )
+                    best_embedded = LengthRelationCandidate(
+                        sample0_offset=s0_off,
+                        width=width,
+                        scalar_type=st,  # type: ignore[arg-type]
+                        target_kind="segment_index",
+                        target_segment_index=j,
                     )
-                    found_embedded = True
+                    best_rel = rel
+                    best_end = rel + width
                     break
-            if found_embedded:
-                break
+        if best_embedded is not None:
+            if best_rel > 0:
+                rule1_byte_offsets.update(
+                    range(
+                        best_embedded.sample0_offset,
+                        best_embedded.sample0_offset + best_embedded.width,
+                    )
+                )
+            candidates.append(best_embedded)
 
     # Rule 2: Header remaining-body / total-file length field
     if len(set(len(s) for s in samples)) >= 2:
@@ -445,7 +455,7 @@ def detect_lengths(
             scan_limit = min(min_seg_len, 16 - s0_start)
             for rel in range(scan_limit):
                 s0_off = s0_start + rel
-                if s0_off in rule1a_byte_offsets or s0_off in rule2_claimed_bytes:
+                if s0_off in rule1_byte_offsets or s0_off in rule2_claimed_bytes:
                     continue
                 for width, st, fmt in (
                     (2, "u16le", "<H"),
@@ -456,7 +466,7 @@ def detect_lengths(
                     if rel + width > min_seg_len:
                         continue
                     if any(
-                        b in rule1a_byte_offsets or b in rule2_claimed_bytes
+                        b in rule1_byte_offsets or b in rule2_claimed_bytes
                         for b in range(s0_off, s0_off + width)
                     ):
                         continue

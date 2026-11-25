@@ -191,9 +191,13 @@ def _pack_scalar(f: FieldSpec, val: Any) -> bytes:
             raise CodecEncodeError(
                 f"Scalar '{f.name}' ({f.scalar_type}) requires float/int, got {type(val).__name__}"
             )
-        if not math.isfinite(float(val)):
+        try:
+            fval = float(val)
+        except OverflowError as exc:
+            raise CodecEncodeError(f"Failed packing scalar '{f.name}': {exc}") from exc
+        if not math.isfinite(fval):
             raise CodecEncodeError(f"Scalar '{f.name}' ({f.scalar_type}) must be finite")
-        val = float(val)
+        val = fval
     try:
         return struct.pack(fmt, val)
     except (struct.error, OverflowError) as exc:

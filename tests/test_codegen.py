@@ -100,9 +100,13 @@ def test_generated_python_f32_overflow_raises_value_error() -> None:
     with pytest.raises(ValueError):
         ns["encode"]({"x": 1e100})
     with pytest.raises(ValueError):
+        ns["encode"]({"x": 10**400})
+    with pytest.raises(ValueError):
         ns["encode"]({})
     with pytest.raises(ValueError):
         ns["encode"]("not_a_dict")
+    with pytest.raises(ValueError):
+        ns["decode"](42)  # type: ignore[arg-type]
 
 
 def test_generated_kaitai_ksy_valid_yaml() -> None:
@@ -258,8 +262,58 @@ def test_cpp20_compile_and_execute_if_available(tmp_path: Path) -> None:
         name="magic_only",
         fields=[FieldSpec(name="magic", kind="magic", magic_hex="4D414749")],
     )
+    collision_spec = CodecSpec(
+        name="col_test",
+        fields=[
+            FieldSpec(name="c1", kind="scalar", scalar_type="u8", count_of="a_item_b"),
+            FieldSpec(
+                name="a_item_b",
+                kind="array",
+                count_field="c1",
+                item_fields=[FieldSpec(name="x", kind="scalar", scalar_type="u8")],
+            ),
+            FieldSpec(name="c2", kind="scalar", scalar_type="u8", count_of="a"),
+            FieldSpec(
+                name="a",
+                kind="array",
+                count_field="c2",
+                item_fields=[
+                    FieldSpec(name="c3", kind="scalar", scalar_type="u8", count_of="b"),
+                    FieldSpec(
+                        name="b",
+                        kind="array",
+                        count_field="c3",
+                        item_fields=[FieldSpec(name="y", kind="scalar", scalar_type="u16le")],
+                    ),
+                ],
+            ),
+            FieldSpec(name="c4", kind="scalar", scalar_type="u8", count_of="a_1"),
+            FieldSpec(
+                name="a_1",
+                kind="array",
+                count_field="c4",
+                item_fields=[FieldSpec(name="z", kind="scalar", scalar_type="u8")],
+            ),
+            FieldSpec(name="c5", kind="scalar", scalar_type="u8", count_of="a1"),
+            FieldSpec(
+                name="a1",
+                kind="array",
+                count_field="c5",
+                item_fields=[FieldSpec(name="w", kind="cstr", encoding="latin-1")],
+            ),
+        ],
+    )
 
-    for spec in (rpg_spec, simple_spec, net_spec, fixed_spec, shadow_spec, nested_spec, magic_only_spec):
+    for spec in (
+        rpg_spec,
+        simple_spec,
+        net_spec,
+        fixed_spec,
+        shadow_spec,
+        nested_spec,
+        magic_only_spec,
+        collision_spec,
+    ):
         (tmp_path / f"{spec.name}.hpp").write_text(generate_cpp_header(spec), encoding="utf-8")
 
     (tmp_path / "rpg.bin").write_bytes(rpg_samples[0])
@@ -280,6 +334,7 @@ def test_cpp20_compile_and_execute_if_available(tmp_path: Path) -> None:
 #include "shadow_test.hpp"
 #include "nested_arr.hpp"
 #include "magic_only.hpp"
+#include "col_test.hpp"
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -370,6 +425,22 @@ int main(int, char** argv) {
         auto mo_bytes = codecforge_gen::MagicOnly::encode(mo);
         auto mo_dec = codecforge_gen::MagicOnly::decode(mo_bytes);
         (void)mo_dec;
+    }
+    // 8. C++ struct collision deduplication & latin-1 cstr
+    {
+        codecforge_gen::ColTest ct{};
+        ct.a_item_b.push_back({7u});
+        codecforge_gen::ColTestAItem ca{};
+        ca.b.push_back({1234u});
+        ct.a.push_back(ca);
+        ct.a_1.push_back({9u});
+        ct.a1.push_back({std::string("\xE9", 1)});
+        auto ct_bytes = codecforge_gen::ColTest::encode(ct);
+        auto ct_dec = codecforge_gen::ColTest::decode(ct_bytes);
+        if (ct_dec.a_item_b.size() != 1 || ct_dec.a_item_b[0].x != 7u) return 17;
+        if (ct_dec.a.size() != 1 || ct_dec.a[0].b[0].y != 1234u) return 18;
+        if (ct_dec.a_1.size() != 1 || ct_dec.a_1[0].z != 9u) return 19;
+        if (ct_dec.a1.size() != 1 || ct_dec.a1[0].w != std::string("\xE9", 1)) return 20;
     }
     return 0;
 }

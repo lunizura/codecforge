@@ -230,6 +230,8 @@ def test_runtime_nan_and_utf8_and_encode_errors() -> None:
         encode_obj(f_spec, {"x": float("nan")})
     with pytest.raises(CodecEncodeError):
         encode_obj(f_spec, {"x": 1e100})
+    with pytest.raises(CodecEncodeError):
+        encode_obj(f_spec, {"x": 10**400})
 
     s_spec = CodecSpec(
         name="str_fmt",

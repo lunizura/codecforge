@@ -152,3 +152,47 @@ def test_detect_lengths_rule2_u32be_does_not_emit_overlapping_u16be() -> None:
     assert len(rem_cands) == 1
     assert rem_cands[0].sample0_offset == 4
     assert rem_cands[0].scalar_type == "u32be"
+
+
+def test_detect_lengths_rule1b_nested_remaining_body_and_inner_var_str() -> None:
+    single_spec = CodecSpec(
+        name="single_len",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="50545354"),
+            FieldSpec(name="n", kind="scalar", scalar_type="u16le", length_of="s"),
+            FieldSpec(name="s", kind="var_str", length_field="n"),
+            FieldSpec(name="crc", kind="scalar", scalar_type="u32le", crc32_of="magic..s"),
+        ],
+    )
+    single_samples = [encode_obj(single_spec, {"s": x}) for x in ("hi", "hello", "world!!")]
+    single_rep = probe_samples(single_samples)
+    assert any(
+        c.target_kind == "segment_index" and c.target_segment_index == 1 and c.sample0_offset == 4
+        for c in single_rep.length_candidates
+    )
+
+    nested_spec = CodecSpec(
+        name="nested_len",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="464D5431"),
+            FieldSpec(name="body_len", kind="scalar", scalar_type="u32le", length_of="flags..name"),
+            FieldSpec(name="flags", kind="scalar", scalar_type="u16le"),
+            FieldSpec(name="name_len", kind="scalar", scalar_type="u16le", length_of="name"),
+            FieldSpec(name="name", kind="var_str", length_field="name_len"),
+            FieldSpec(name="crc", kind="scalar", scalar_type="u32le", crc32_of="magic..name"),
+        ],
+    )
+    nested_samples = [
+        encode_obj(nested_spec, {"flags": 1, "name": "alice_long_username_01"}),
+        encode_obj(nested_spec, {"flags": 2, "name": "bob_longer_username_002"}),
+        encode_obj(nested_spec, {"flags": 3, "name": "charlie_longest_username_003"}),
+    ]
+    nested_rep = probe_samples(nested_samples)
+    seg_cands = [c for c in nested_rep.length_candidates if c.target_kind == "segment_index"]
+    rem_cands = [c for c in nested_rep.length_candidates if c.target_kind == "remaining_body"]
+    assert len(seg_cands) == 1
+    assert seg_cands[0].sample0_offset == 10
+    assert seg_cands[0].scalar_type == "u16le"
+    assert len(rem_cands) == 1
+    assert rem_cands[0].sample0_offset == 4
+    assert rem_cands[0].scalar_type == "u32le"
