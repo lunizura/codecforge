@@ -145,6 +145,10 @@ def test_schema_validation_errors() -> None:
             CodecSpec(name="bad_hex", fields=[FieldSpec(name="m", kind="magic", magic_hex="ABC")])
         )
 
+    # Explicit empty pad_byte_hex rejected in from_dict
+    with pytest.raises(SchemaValidationError):
+        FieldSpec.from_dict({"name": "s", "kind": "fixed_str", "size": 4, "pad_byte_hex": ""})
+
 
 def test_resolve_field_span() -> None:
     fields = [

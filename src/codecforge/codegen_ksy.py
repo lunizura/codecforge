@@ -40,6 +40,7 @@ def _ksy_encoding(enc: str) -> str:
 def _build_seq_and_types(
     fields: list[FieldSpec],
     types_out: dict[str, Any],
+    prefix: str = "",
 ) -> list[dict[str, Any]]:
     seq: list[dict[str, Any]] = []
     for f in fields:
@@ -68,12 +69,19 @@ def _build_seq_and_types(
         elif f.kind == "bytes_rest":
             entry["size-eos"] = True
         elif f.kind == "array":
-            item_type_name = f"{f.name}_item"
+            base_type_name = f"{prefix}{f.name}_item"
+            item_type_name = base_type_name
+            suffix_idx = 2
+            while item_type_name in types_out:
+                item_type_name = f"{base_type_name}_{suffix_idx}"
+                suffix_idx += 1
             entry["type"] = item_type_name
             entry["repeat"] = "expr"
             entry["repeat-expr"] = f.count_field
             types_out[item_type_name] = {
-                "seq": _build_seq_and_types(f.item_fields, types_out)
+                "seq": _build_seq_and_types(
+                    f.item_fields, types_out, prefix=f"{prefix}{f.name}_"
+                )
             }
         if f.description:
             entry["doc"] = f.description

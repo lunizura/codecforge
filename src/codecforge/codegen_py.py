@@ -161,7 +161,15 @@ def _pack_scalar(f: dict[str, Any], val: Any) -> bytes:
         raise ValueError(f"Failed packing scalar '{{f['name']}}': {{exc}}") from exc
 
 
+def _require_field(obj: dict[str, Any], name: str) -> Any:
+    if name not in obj:
+        raise ValueError(f"Missing required field '{{name}}'")
+    return obj[name]
+
+
 def _encode_fields(fields: list[dict[str, Any]], obj: dict[str, Any]) -> bytes:
+    if not isinstance(obj, dict):
+        raise ValueError("Object to encode must be a dictionary")
     chunks: dict[str, bytes] = {{}}
 
     for f in fields:
@@ -171,37 +179,55 @@ def _encode_fields(fields: list[dict[str, Any]], obj: dict[str, Any]) -> bytes:
             chunks[name] = bytes.fromhex(f["magic_hex"])
         elif kind == "scalar":
             if f.get("count_of"):
-                items = obj[f["count_of"]]
+                items = _require_field(obj, f["count_of"])
                 if not isinstance(items, list):
                     raise ValueError(f"count_of target '{{f['count_of']}}' must be a list")
                 chunks[name] = _pack_scalar(f, len(items))
             elif f.get("length_of") or f.get("crc32_of"):
                 chunks[name] = b""
             else:
-                chunks[name] = _pack_scalar(f, obj[name])
+                chunks[name] = _pack_scalar(f, _require_field(obj, name))
         elif kind == "fixed_bytes":
-            b = bytes(obj[name])
+            raw_val = _require_field(obj, name)
+            if not isinstance(raw_val, (bytes, bytearray)):
+                raise ValueError(f"fixed_bytes '{{name}}' must be bytes/bytearray")
+            b = bytes(raw_val)
             if len(b) != int(f["size"]):
                 raise ValueError(f"fixed_bytes '{{name}}' length mismatch")
             chunks[name] = b
         elif kind == "fixed_str":
-            raw = str(obj[name]).encode(f.get("encoding", "utf-8"))
+            raw_val = _require_field(obj, name)
+            if not isinstance(raw_val, str):
+                raise ValueError(f"fixed_str '{{name}}' must be str")
+            raw = raw_val.encode(f.get("encoding", "utf-8"))
             pad = bytes.fromhex(f.get("pad_byte_hex", "00"))
             size = int(f["size"])
             if pad in raw or len(raw) > size:
                 raise ValueError(f"fixed_str '{{name}}' invalid length or pad byte")
             chunks[name] = raw.ljust(size, pad)
         elif kind == "cstr":
-            raw = str(obj[name]).encode(f.get("encoding", "utf-8"))
+            raw_val = _require_field(obj, name)
+            if not isinstance(raw_val, str):
+                raise ValueError(f"cstr '{{name}}' must be str")
+            raw = raw_val.encode(f.get("encoding", "utf-8"))
             if b"\\x00" in raw:
                 raise ValueError(f"cstr '{{name}}' contains embedded NUL")
             chunks[name] = raw + b"\\x00"
         elif kind == "var_str":
-            chunks[name] = str(obj[name]).encode(f.get("encoding", "utf-8"))
+            raw_val = _require_field(obj, name)
+            if not isinstance(raw_val, str):
+                raise ValueError(f"var_str '{{name}}' must be str")
+            chunks[name] = raw_val.encode(f.get("encoding", "utf-8"))
         elif kind in ("var_bytes", "bytes_rest"):
-            chunks[name] = bytes(obj[name])
+            raw_val = _require_field(obj, name)
+            if not isinstance(raw_val, (bytes, bytearray)):
+                raise ValueError(f"{{kind}} '{{name}}' must be bytes/bytearray")
+            chunks[name] = bytes(raw_val)
         elif kind == "array":
-            chunks[name] = b"".join(_encode_fields(f["item_fields"], item) for item in obj[name])
+            items_val = _require_field(obj, name)
+            if not isinstance(items_val, list):
+                raise ValueError(f"array '{{name}}' must be a list")
+            chunks[name] = b"".join(_encode_fields(f["item_fields"], item) for item in items_val)
         else:
             raise ValueError(f"Unsupported field kind: {{kind}}")
 

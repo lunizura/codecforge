@@ -39,7 +39,11 @@ class OracleResult:
         }
 
 
-def _mutate_fields(fields: list[FieldSpec], target_dict: dict[str, Any]) -> None:
+def _mutate_fields(
+    fields: list[FieldSpec],
+    target_dict: dict[str, Any],
+    fallback_dicts: list[dict[str, Any]] | None = None,
+) -> None:
     for f in fields:
         if f.kind == "magic":
             continue
@@ -87,13 +91,23 @@ def _mutate_fields(fields: list[FieldSpec], target_dict: dict[str, Any]) -> None
             target_dict[f.name] = bytes([b[0] ^ 0xFF]) + b[1:]
         elif f.kind == "array":
             arr = target_dict[f.name]
-            if isinstance(arr, list) and len(arr) > 0:
-                cloned1 = copy.deepcopy(arr[0])
-                _mutate_fields(f.item_fields, cloned1)
-                cloned2 = copy.deepcopy(cloned1)
-                _mutate_fields(f.item_fields, cloned2)
-                arr.append(cloned1)
-                arr.append(cloned2)
+            if isinstance(arr, list):
+                exemplar: dict[str, Any] | None = None
+                if len(arr) > 0:
+                    exemplar = arr[0]
+                elif fallback_dicts:
+                    for fb in fallback_dicts:
+                        fb_arr = fb.get(f.name)
+                        if isinstance(fb_arr, list) and len(fb_arr) > 0:
+                            exemplar = fb_arr[0]
+                            break
+                if exemplar is not None:
+                    cloned1 = copy.deepcopy(exemplar)
+                    _mutate_fields(f.item_fields, cloned1)
+                    cloned2 = copy.deepcopy(cloned1)
+                    _mutate_fields(f.item_fields, cloned2)
+                    arr.append(cloned1)
+                    arr.append(cloned2)
 
 
 def _compare_non_derived(
@@ -176,6 +190,7 @@ def verify_codec(
     gate1_ok = True
     first_spans: list[tuple[str, int, int]] | None = None
     first_sample_ok = False
+    decoded_samples: list[dict[str, Any]] = []
 
     for idx, sample in enumerate(samples):
         try:
@@ -204,6 +219,7 @@ def verify_codec(
             )
             continue
 
+        decoded_samples.append(decoded)
         if idx == 0:
             first_spans = spans
             first_sample_ok = True
@@ -262,9 +278,9 @@ def verify_codec(
             )
 
         try:
-            base_obj, _ = decode_bytes(spec, samples[0])
+            base_obj = decoded_samples[0]
             mut = copy.deepcopy(base_obj)
-            _mutate_fields(spec.fields, mut)
+            _mutate_fields(spec.fields, mut, fallback_dicts=decoded_samples[1:])
             mut_bytes = encode_obj(spec, mut)
             re_obj, _ = decode_bytes(spec, mut_bytes)
             re_bytes = encode_obj(spec, re_obj)

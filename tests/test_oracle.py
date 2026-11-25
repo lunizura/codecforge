@@ -113,3 +113,35 @@ def test_oracle_fixed_str_custom_pad_byte_58() -> None:
     ]
     res = verify_codec(spec, samples)
     assert res.passed, res.failures
+
+
+def test_oracle_gate3_catches_inner_array_bug_when_sample0_array_empty() -> None:
+    good_spec = CodecSpec(
+        name="arr_inner",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="41525232"),
+            FieldSpec(name="cnt", kind="scalar", scalar_type="u8", count_of="items"),
+            FieldSpec(
+                name="items",
+                kind="array",
+                count_field="cnt",
+                item_fields=[
+                    FieldSpec(name="s_len", kind="scalar", scalar_type="u8", length_of="s"),
+                    FieldSpec(name="s", kind="var_str", length_field="s_len"),
+                ],
+            ),
+        ],
+    )
+    samples = [
+        encode_obj(good_spec, {"items": []}),
+        encode_obj(good_spec, {"items": [{"s": "hi"}]}),
+    ]
+    assert verify_codec(good_spec, samples).passed
+
+    bad_spec = copy.deepcopy(good_spec)
+    bad_spec.fields[2].item_fields[0].length_of = None
+    res = verify_codec(bad_spec, samples)
+    assert not res.passed
+    assert res.gate1_roundtrip_passed
+    assert not res.gate3_mutation_passed
+    assert any("Gate 3" in f for f in res.failures)

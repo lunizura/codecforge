@@ -428,9 +428,15 @@ def _emit_struct(
             "std::span<const std::uint8_t> _cf_buf, std::size_t& _cf_pos) {"
         )
 
+    crc_targets: set[str] = set()
+    for f in fields:
+        if f.kind == "scalar" and f.crc32_of is not None:
+            crc_targets.update(resolve_field_span(fields, f.crc32_of))
+
     lines.append(f"        {struct_name} _cf_obj{{}};")
     for f in fields:
-        lines.append(f"        const std::size_t _cf_start_{f.name} = _cf_pos;")
+        if f.name in crc_targets:
+            lines.append(f"        const std::size_t _cf_start_{f.name} = _cf_pos;")
         str_check_fn = "_cf_check_ascii" if f.encoding.lower() == "ascii" else "_cf_check_utf8"
         if f.kind == "magic":
             raw_bytes = bytes.fromhex(f.magic_hex or "")
@@ -473,7 +479,7 @@ def _emit_struct(
             )
             lines.append(f"        std::size_t _cf_pad_{f.name} = {f.size};")
             lines.append(
-                f"        for (std::size_t _cf_i = 0; _cf_i < {f.size}; ++_cf_i) {{"
+                f"        for (std::size_t _cf_i = 0; _cf_i < static_cast<std::size_t>({f.size}); ++_cf_i) {{"
             )
             lines.append(
                 f"            if (_cf_buf[_cf_pos + _cf_i] == 0x{pad_byte:02X}u) {{"
@@ -483,7 +489,7 @@ def _emit_struct(
             lines.append("            }")
             lines.append("        }")
             lines.append(
-                f"        for (std::size_t _cf_i = _cf_pad_{f.name}; _cf_i < {f.size}; ++_cf_i) {{"
+                f"        for (std::size_t _cf_i = _cf_pad_{f.name}; _cf_i < static_cast<std::size_t>({f.size}); ++_cf_i) {{"
             )
             lines.append(
                 f'            codecforge_gen::_cf_require(_cf_buf[_cf_pos + _cf_i] == 0x{pad_byte:02X}u, "Non-canonical padding in {f.name}");'
@@ -562,7 +568,8 @@ def _emit_struct(
                 f"            _cf_obj.{f.name}.push_back({child}::decode_item(_cf_buf, _cf_pos));"
             )
             lines.append("        }")
-        lines.append(f"        const std::size_t _cf_end_{f.name} = _cf_pos;")
+        if f.name in crc_targets:
+            lines.append(f"        const std::size_t _cf_end_{f.name} = _cf_pos;")
 
     # Post-list CRC32 checks
     for f in fields:
@@ -594,9 +601,12 @@ def _emit_struct(
 
     # Encode method
     enc_name = "encode" if is_root else "encode_item"
+    has_non_magic = any(f.kind != "magic" for f in fields)
     lines.append(
         f"    static std::vector<std::uint8_t> {enc_name}(const {struct_name}& _cf_obj) {{"
     )
+    if not has_non_magic:
+        lines.append("        (void)_cf_obj;")
     for f in fields:
         lines.append(f"        std::vector<std::uint8_t> _cf_chunk_{f.name};")
 
@@ -611,10 +621,11 @@ def _emit_struct(
             assert f.scalar_type is not None
             if f.count_of is not None:
                 max_v = UNSIGNED_MAX[f.scalar_type]
-                lines.append(
-                    f'        codecforge_gen::_cf_require(_cf_obj.{f.count_of}.size() <= {max_v}ULL, '
-                    f'"Array {f.count_of} exceeds {f.scalar_type} max");'
-                )
+                if max_v < 0xFFFFFFFFFFFFFFFF:
+                    lines.append(
+                        f'        codecforge_gen::_cf_require(_cf_obj.{f.count_of}.size() <= {max_v}ULL, '
+                        f'"Array {f.count_of} exceeds {f.scalar_type} max");'
+                    )
                 lines.append(
                     f"        codecforge_gen::write_{f.scalar_type}(_cf_chunk_{f.name}, "
                     f"static_cast<{_CPP_SCALAR_TYPE[f.scalar_type]}>(_cf_obj.{f.count_of}.size()));"
@@ -693,10 +704,11 @@ def _emit_struct(
             sum_expr = " + ".join(f"_cf_chunk_{t}.size()" for t in targets)
             max_v = UNSIGNED_MAX[f.scalar_type]
             lines.append(f"        const std::size_t _cf_len_{f.name} = {sum_expr};")
-            lines.append(
-                f'        codecforge_gen::_cf_require(_cf_len_{f.name} <= {max_v}ULL, '
-                f'"length_of {f.name} exceeds {f.scalar_type} max");'
-            )
+            if max_v < 0xFFFFFFFFFFFFFFFF:
+                lines.append(
+                    f'        codecforge_gen::_cf_require(_cf_len_{f.name} <= {max_v}ULL, '
+                    f'"length_of {f.name} exceeds {f.scalar_type} max");'
+                )
             lines.append(f"        _cf_chunk_{f.name}.clear();")
             lines.append(
                 f"        codecforge_gen::write_{f.scalar_type}(_cf_chunk_{f.name}, "

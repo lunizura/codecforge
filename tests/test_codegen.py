@@ -99,6 +99,10 @@ def test_generated_python_f32_overflow_raises_value_error() -> None:
     exec(compile(generate_python_module(spec), "<float_only>", "exec"), ns)
     with pytest.raises(ValueError):
         ns["encode"]({"x": 1e100})
+    with pytest.raises(ValueError):
+        ns["encode"]({})
+    with pytest.raises(ValueError):
+        ns["encode"]("not_a_dict")
 
 
 def test_generated_kaitai_ksy_valid_yaml() -> None:
@@ -111,6 +115,43 @@ def test_generated_kaitai_ksy_valid_yaml() -> None:
     assert "items_item" in parsed["types"]
     assert parsed["seq"][6]["id"] == "item_count"
     assert parsed["seq"][7]["repeat"] == "expr"
+
+
+def test_generated_kaitai_ksy_nested_array_no_type_collision() -> None:
+    nested_spec = CodecSpec(
+        name="nested_ksy",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="4E455354"),
+            FieldSpec(name="cnt", kind="scalar", scalar_type="u8", count_of="groups"),
+            FieldSpec(
+                name="groups",
+                kind="array",
+                count_field="cnt",
+                item_fields=[
+                    FieldSpec(name="inner_cnt", kind="scalar", scalar_type="u8", count_of="items"),
+                    FieldSpec(
+                        name="items",
+                        kind="array",
+                        count_field="inner_cnt",
+                        item_fields=[FieldSpec(name="val", kind="scalar", scalar_type="u16le")],
+                    ),
+                ],
+            ),
+            FieldSpec(name="item_cnt2", kind="scalar", scalar_type="u8", count_of="items"),
+            FieldSpec(
+                name="items",
+                kind="array",
+                count_field="item_cnt2",
+                item_fields=[FieldSpec(name="other", kind="scalar", scalar_type="u32le")],
+            ),
+        ],
+    )
+    parsed = yaml.safe_load(generate_kaitai_ksy(nested_spec))
+    inner_type = parsed["types"]["groups_item"]["seq"][1]["type"]
+    outer_type = parsed["seq"][-1]["type"]
+    assert inner_type != outer_type
+    assert parsed["types"][inner_type]["seq"][0]["type"] == "u2le"
+    assert parsed["types"][outer_type]["seq"][0]["type"] == "u4le"
 
 
 def test_generated_html_report_escapes_and_renders() -> None:
@@ -149,6 +190,18 @@ def test_cpp_header_shadowing_safety_and_structure() -> None:
     assert "_cf_chunk_data" in hdr
     assert "codecforge_gen::read_u8" in hdr
     assert "codecforge_gen::crc32_ieee" in hdr
+    # Ensure _cf_start_ / _cf_end_ are NOT emitted for non-CRC-covered fields (would fail -Wunused-variable)
+    assert "_cf_start_crc32_ieee" not in hdr
+    assert "_cf_end_crc32_ieee" not in hdr
+
+    no_crc_spec = CodecSpec(
+        name="magic_only",
+        fields=[FieldSpec(name="magic", kind="magic", magic_hex="4D414749")],
+    )
+    no_crc_hdr = generate_cpp_header(no_crc_spec)
+    assert "_cf_start_" not in no_crc_hdr
+    assert "_cf_end_" not in no_crc_hdr
+    assert "(void)_cf_obj;" in no_crc_hdr
 
 
 def test_cpp20_compile_and_execute_if_available(tmp_path: Path) -> None:
@@ -176,7 +229,37 @@ def test_cpp20_compile_and_execute_if_available(tmp_path: Path) -> None:
         ],
     )
 
-    for spec in (rpg_spec, simple_spec, net_spec, fixed_spec, shadow_spec):
+    nested_spec = CodecSpec(
+        name="nested_arr",
+        endian="le",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="4E415252"),
+            FieldSpec(name="grp_cnt", kind="scalar", scalar_type="u8", count_of="groups"),
+            FieldSpec(
+                name="groups",
+                kind="array",
+                count_field="grp_cnt",
+                item_fields=[
+                    FieldSpec(name="sub_cnt", kind="scalar", scalar_type="u8", count_of="subs"),
+                    FieldSpec(
+                        name="subs",
+                        kind="array",
+                        count_field="sub_cnt",
+                        item_fields=[
+                            FieldSpec(name="label", kind="cstr"),
+                            FieldSpec(name="val", kind="scalar", scalar_type="i16le"),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+    magic_only_spec = CodecSpec(
+        name="magic_only",
+        fields=[FieldSpec(name="magic", kind="magic", magic_hex="4D414749")],
+    )
+
+    for spec in (rpg_spec, simple_spec, net_spec, fixed_spec, shadow_spec, nested_spec, magic_only_spec):
         (tmp_path / f"{spec.name}.hpp").write_text(generate_cpp_header(spec), encoding="utf-8")
 
     (tmp_path / "rpg.bin").write_bytes(rpg_samples[0])
@@ -195,6 +278,8 @@ def test_cpp20_compile_and_execute_if_available(tmp_path: Path) -> None:
 #include "net_packet.hpp"
 #include "fixed_header.hpp"
 #include "shadow_test.hpp"
+#include "nested_arr.hpp"
+#include "magic_only.hpp"
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -270,6 +355,22 @@ int main(int, char** argv) {
     if (!expect_throws([&]() { (void)codecforge_gen::SimpleSave::decode(read_bin(argv[6])); })) return 12;
     if (!expect_throws([&]() { (void)codecforge_gen::FixedHeader::decode(read_bin(argv[7])); })) return 13;
     if (!expect_throws([&]() { (void)codecforge_gen::NetPacket::decode(read_bin(argv[8])); })) return 14;
+    // 7. Nested array & magic-only round-trip
+    {
+        codecforge_gen::NestedArr na{};
+        codecforge_gen::NestedArrGroupsItem g{};
+        g.subs.push_back({"inner", -12});
+        na.groups.push_back(g);
+        auto na_bytes = codecforge_gen::NestedArr::encode(na);
+        auto na_dec = codecforge_gen::NestedArr::decode(na_bytes);
+        if (na_dec.groups.size() != 1 || na_dec.groups[0].subs.size() != 1) return 15;
+        if (na_dec.groups[0].subs[0].label != "inner" || na_dec.groups[0].subs[0].val != -12) return 16;
+
+        codecforge_gen::MagicOnly mo{};
+        auto mo_bytes = codecforge_gen::MagicOnly::encode(mo);
+        auto mo_dec = codecforge_gen::MagicOnly::decode(mo_bytes);
+        (void)mo_dec;
+    }
     return 0;
 }
 """,

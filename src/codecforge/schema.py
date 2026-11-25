@@ -170,10 +170,13 @@ class FieldSpec:
         if magic_hex is not None:
             magic_hex = _normalize_hex(magic_hex, f"field '{name}' magic_hex")
 
-        pad_raw = data.get("pad_byte_hex", "00")
-        if not isinstance(pad_raw, str):
-            raise SchemaValidationError(f"field '{name}' pad_byte_hex must be a string")
-        pad_byte_hex = _normalize_hex(pad_raw, f"field '{name}' pad_byte_hex") if pad_raw else "00"
+        if "pad_byte_hex" in data:
+            pad_raw = data["pad_byte_hex"]
+            if not isinstance(pad_raw, str):
+                raise SchemaValidationError(f"field '{name}' pad_byte_hex must be a string")
+            pad_byte_hex = _normalize_hex(pad_raw, f"field '{name}' pad_byte_hex")
+        else:
+            pad_byte_hex = "00"
 
         raw_items = data.get("item_fields", [])
         if raw_items is None:
