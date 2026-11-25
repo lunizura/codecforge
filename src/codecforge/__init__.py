@@ -7,6 +7,19 @@ from codecforge.errors import (
     SchemaValidationError,
     SynthesisError,
 )
+from codecforge.oracle import OracleResult, verify_codec
+from codecforge.probe import (
+    AlignedSegment,
+    ChecksumCandidate,
+    LengthRelationCandidate,
+    ProbeReport,
+    align_samples,
+    detect_checksums,
+    detect_lengths,
+    probe_samples,
+    shannon_entropy,
+    sliding_entropy,
+)
 from codecforge.runtime import decode_bytes, encode_obj
 from codecforge.schema import (
     CodecSpec,
@@ -30,4 +43,16 @@ __all__ = [
     "validate_spec",
     "decode_bytes",
     "encode_obj",
+    "AlignedSegment",
+    "ChecksumCandidate",
+    "LengthRelationCandidate",
+    "ProbeReport",
+    "align_samples",
+    "detect_checksums",
+    "detect_lengths",
+    "probe_samples",
+    "shannon_entropy",
+    "sliding_entropy",
+    "OracleResult",
+    "verify_codec",
 ]
