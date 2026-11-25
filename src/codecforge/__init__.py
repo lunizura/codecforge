@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from codecforge.codegen_cpp import generate_cpp_header
+from codecforge.codegen_ksy import generate_kaitai_ksy
+from codecforge.codegen_py import generate_python_module
 from codecforge.errors import (
     CodecDecodeError,
     CodecEncodeError,
@@ -27,6 +30,7 @@ from codecforge.probe import (
     shannon_entropy,
     sliding_entropy,
 )
+from codecforge.report_html import generate_html_report
 from codecforge.runtime import decode_bytes, encode_obj
 from codecforge.schema import (
     CodecSpec,
@@ -75,4 +79,8 @@ __all__ = [
     "synthesize_codec",
     "synthesize_heuristic",
     "synthesize_with_llm",
+    "generate_python_module",
+    "generate_cpp_header",
+    "generate_kaitai_ksy",
+    "generate_html_report",
 ]
