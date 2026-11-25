@@ -65,6 +65,7 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
         name=args.name,
         model=args.model,
         max_rounds=args.max_rounds,
+        hint=args.hint,
     )
     yaml_text = spec.to_yaml()
     _write_or_print(yaml_text, args.out)
@@ -94,24 +95,12 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
 def _cmd_compile(args: argparse.Namespace) -> int:
     spec = _load_spec(args.spec)
-    if args.target == "py":
+    if args.lang == "python":
         _write_or_print(generate_python_module(spec), args.out)
-    elif args.target == "cpp":
+    elif args.lang == "cpp":
         _write_or_print(generate_cpp_header(spec), args.out)
-    elif args.target == "ksy":
+    elif args.lang == "ksy":
         _write_or_print(generate_kaitai_ksy(spec), args.out)
-    elif args.target == "all":
-        out_dir = Path(args.out) if args.out else Path(".")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / f"{spec.name}.py").write_text(
-            generate_python_module(spec), encoding="utf-8"
-        )
-        (out_dir / f"{spec.name}.hpp").write_text(
-            generate_cpp_header(spec), encoding="utf-8"
-        )
-        (out_dir / f"{spec.name}.ksy").write_text(
-            generate_kaitai_ksy(spec), encoding="utf-8"
-        )
     return 0
 
 
@@ -151,13 +140,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_synth.add_argument("--model", help="Override provider LLM model name")
     p_synth.add_argument("--name", default="synthesized_format", help="Format identifier")
+    p_synth.add_argument("--hint", help="Optional domain hint passed to LLM synthesis")
     p_synth.add_argument("--max-rounds", type=int, default=4, help="Max LLM self-healing rounds")
     p_synth.add_argument("-o", "--out", help="Write synthesized CodecSpec YAML to file")
     p_synth.add_argument("--report", help="Also write dark-mode HTML inspection report")
     p_synth.set_defaults(func=_cmd_synthesize)
 
     p_verify = sub.add_parser("verify", help="Run the 3-Gate Anti-Cheat Oracle on a spec")
-    p_verify.add_argument("--spec", required=True, help="Path to CodecSpec YAML")
+    p_verify.add_argument("spec", help="Path to CodecSpec YAML")
     p_verify.add_argument("samples", nargs="+", help="Paths to binary sample files")
     p_verify.add_argument(
         "--max-opaque-ratio",
@@ -169,18 +159,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.set_defaults(func=_cmd_verify)
 
     p_compile = sub.add_parser("compile", help="Compile a CodecSpec YAML to Python, C++20, or .ksy")
-    p_compile.add_argument("--spec", required=True, help="Path to CodecSpec YAML")
+    p_compile.add_argument("spec", help="Path to CodecSpec YAML")
     p_compile.add_argument(
-        "--target",
-        choices=["py", "cpp", "ksy", "all"],
-        default="py",
-        help="Target artifact (default: py)",
+        "--lang",
+        choices=["python", "cpp", "ksy"],
+        default="python",
+        help="Target language/schema (default: python)",
     )
-    p_compile.add_argument("-o", "--out", help="Output file path (or directory for --target all)")
+    p_compile.add_argument("-o", "--out", help="Output file path")
     p_compile.set_defaults(func=_cmd_compile)
 
     p_inspect = sub.add_parser("inspect", help="Generate dark-mode HTML byte-map report")
-    p_inspect.add_argument("--spec", required=True, help="Path to CodecSpec YAML")
+    p_inspect.add_argument("spec", help="Path to CodecSpec YAML")
     p_inspect.add_argument("samples", nargs="+", help="Paths to binary sample files")
     p_inspect.add_argument("-o", "--out", help="Output HTML file path")
     p_inspect.set_defaults(func=_cmd_inspect)

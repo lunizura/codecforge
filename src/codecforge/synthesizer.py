@@ -359,6 +359,7 @@ def synthesize_with_llm(
     provider: LLMProvider,
     name: str = "synthesized_format",
     max_rounds: int = 4,
+    hint: str | None = None,
 ) -> tuple[CodecSpec, OracleResult]:
     if len(samples) < 2:
         raise SynthesisError("synthesize_with_llm requires at least 2 samples")
@@ -372,9 +373,13 @@ def synthesize_with_llm(
     for round_idx in range(1, max_rounds + 1):
         prompt_parts = [
             f"Target format name: {name}",
+        ]
+        if hint:
+            prompt_parts.append(f"Format hint: {hint}")
+        prompt_parts.extend([
             "",
             summary,
-        ]
+        ])
         if round_idx > 1:
             prompt_parts.extend([
                 "",
@@ -414,9 +419,12 @@ def synthesize_codec(
     model: str | None = None,
     max_rounds: int = 4,
     llm_provider: LLMProvider | None = None,
+    hint: str | None = None,
 ) -> tuple[CodecSpec, OracleResult]:
     if llm_provider is not None:
-        return synthesize_with_llm(samples, llm_provider, name=name, max_rounds=max_rounds)
+        return synthesize_with_llm(
+            samples, llm_provider, name=name, max_rounds=max_rounds, hint=hint
+        )
     if provider_name == "heuristic":
         spec = synthesize_heuristic(samples, name=name)
         oracle = verify_codec(spec, samples)
@@ -426,4 +434,4 @@ def synthesize_codec(
             )
         return spec, oracle
     provider = build_llm_provider(provider_name, model=model)
-    return synthesize_with_llm(samples, provider, name=name, max_rounds=max_rounds)
+    return synthesize_with_llm(samples, provider, name=name, max_rounds=max_rounds, hint=hint)

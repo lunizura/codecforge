@@ -88,10 +88,12 @@ def test_mock_llm_multi_round_self_healing() -> None:
         name="rpg_save",
         max_rounds=4,
         llm_provider=mock,
+        hint="RPG save file with item array",
     )
     assert oracle.passed
     assert spec == truth_spec
     assert len(mock.calls) == 3
+    assert "RPG save file with item array" in mock.calls[0][1]
     # Verify oracle feedback was fed into rounds 2 and 3
     assert "Oracle Failures to fix" in mock.calls[1][1]
     assert "Gate 2" in mock.calls[1][1]

@@ -61,19 +61,21 @@ Generate the 3 deterministic demo binary samples and run the full pipeline:
 python examples/generate_demo_samples.py
 
 # 1. Probe alignment, length prefixes, and CRC32 trailers
-codecforge probe examples/samples/save_0*.bin
+codecforge probe examples/samples/save_slot1.sav examples/samples/save_slot2.sav examples/samples/save_slot3.sav
 
 # 2. Synthesize & 3-gate verify a CodecSpec offline
-codecforge synthesize examples/samples/save_0*.bin --provider heuristic --name simple_save -o simple_save.yaml
+codecforge synthesize examples/samples/save_slot1.sav examples/samples/save_slot2.sav examples/samples/save_slot3.sav --provider heuristic --name simple_save -o simple_save.yaml
 
 # 3. Verify an existing spec against samples
-codecforge verify --spec simple_save.yaml examples/samples/save_0*.bin
+codecforge verify simple_save.yaml examples/samples/save_slot1.sav examples/samples/save_slot2.sav examples/samples/save_slot3.sav
 
 # 4. Compile standalone Python, C++20, and Kaitai Struct codecs
-codecforge compile --spec simple_save.yaml --target all -o out/
+codecforge compile simple_save.yaml --lang python -o simple_save.py
+codecforge compile simple_save.yaml --lang cpp -o simple_save.hpp
+codecforge compile simple_save.yaml --lang ksy -o simple_save.ksy
 
 # 5. Generate a standalone dark-mode HTML hex-map inspection report
-codecforge inspect --spec simple_save.yaml examples/samples/save_0*.bin -o report.html
+codecforge inspect simple_save.yaml examples/samples/save_slot1.sav examples/samples/save_slot2.sav -o report.html
 ```
 
 ---
@@ -106,7 +108,7 @@ For complex formats with nested arrays or multi-field records, use `--provider`:
 ```python
 import simple_save  # zero external dependencies
 
-with open("examples/samples/save_01.bin", "rb") as f:
+with open("examples/samples/save_slot1.sav", "rb") as f:
     obj = simple_save.decode(f.read())
 
 obj["text_4"] = "UpdatedHeroName"

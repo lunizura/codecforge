@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +25,19 @@ from tests.fixtures import (
 
 
 def _find_cpp20_compiler() -> tuple[str, str] | None:
+    candidates_gnu: list[str] = []
     for name in ("g++", "clang++"):
         exe = shutil.which(name)
-        if not exe:
-            continue
+        if exe:
+            candidates_gnu.append(exe)
+    if os.name == "nt":
+        for win_gpp in (
+            r"C:\msys64\mingw64\bin\g++.exe",
+            r"C:\w64devkit\bin\g++.exe",
+        ):
+            if Path(win_gpp).is_file() and win_gpp not in candidates_gnu:
+                candidates_gnu.append(win_gpp)
+    for exe in candidates_gnu:
         proc = subprocess.run(
             [exe, "-std=c++20", "-x", "c++", "-", "-fsyntax-only"],
             input=b"#include <span>\nint main() { return 0; }\n",
@@ -211,6 +221,8 @@ def test_cpp_header_shadowing_safety_and_structure() -> None:
 def test_cpp20_compile_and_execute_if_available(tmp_path: Path) -> None:
     found = _find_cpp20_compiler()
     if found is None:
+        if sys.platform.startswith("linux") and os.environ.get("CI") == "true":
+            assert found is not None, "Expected g++ or clang++ with C++20 <span> on Linux CI"
         pytest.skip("No C++20 compiler with <span> available in environment")
     kind, compiler_ref = found
 

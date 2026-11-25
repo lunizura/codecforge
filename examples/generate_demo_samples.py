@@ -29,7 +29,7 @@ def main() -> None:
         _pack_simple_save(140500, 240.125, "Grandmaster_Z", 60),
     ]
     for idx, data in enumerate(samples, start=1):
-        target = out_dir / f"save_0{idx}.bin"
+        target = out_dir / f"save_slot{idx}.sav"
         target.write_bytes(data)
         print(f"Wrote {target} ({len(data)} bytes)")
 

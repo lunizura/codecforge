@@ -8,3 +8,4 @@ dist/
 build/
 *.exe
 *.out
+examples/samples/*.sav

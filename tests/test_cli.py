@@ -60,23 +60,26 @@ def test_cli_synthesize_verify_compile_inspect_flow(tmp_path: Path) -> None:
     assert "<!DOCTYPE html>" in report_path.read_text(encoding="utf-8")
 
     # verify
-    rc_v = main(["verify", "--spec", str(spec_path), *sample_paths])
+    rc_v = main(["verify", str(spec_path), *sample_paths])
     assert rc_v == 0
 
-    # compile all targets
-    out_dir = tmp_path / "compiled"
-    rc_c = main(["compile", "--spec", str(spec_path), "--target", "all", "-o", str(out_dir)])
-    assert rc_c == 0
-    assert (out_dir / "simple_save.py").is_file()
-    assert (out_dir / "simple_save.hpp").is_file()
-    assert (out_dir / "simple_save.ksy").is_file()
+    # compile python, cpp, ksy
+    py_out = tmp_path / "simple_save.py"
+    cpp_out = tmp_path / "simple_save.hpp"
+    ksy_out = tmp_path / "simple_save.ksy"
+    assert main(["compile", str(spec_path), "--lang", "python", "-o", str(py_out)]) == 0
+    assert main(["compile", str(spec_path), "--lang", "cpp", "-o", str(cpp_out)]) == 0
+    assert main(["compile", str(spec_path), "--lang", "ksy", "-o", str(ksy_out)]) == 0
+    assert py_out.is_file()
+    assert cpp_out.is_file()
+    assert ksy_out.is_file()
 
-    ksy_data = yaml.safe_load((out_dir / "simple_save.ksy").read_text(encoding="utf-8"))
+    ksy_data = yaml.safe_load(ksy_out.read_text(encoding="utf-8"))
     assert ksy_data["meta"]["id"] == "simple_save"
 
     # inspect
     inspect_html = tmp_path / "inspect.html"
-    rc_i = main(["inspect", "--spec", str(spec_path), *sample_paths, "-o", str(inspect_html)])
+    rc_i = main(["inspect", str(spec_path), *sample_paths, "-o", str(inspect_html)])
     assert rc_i == 0
     assert "Gate 1: Bit-Exact Round-Trip: PASS" in inspect_html.read_text(encoding="utf-8")
 
@@ -94,7 +97,7 @@ def test_cli_failure_exit_codes(tmp_path: Path) -> None:
         "name: bad\nendian: le\nfields:\n  - name: blob\n    kind: bytes_rest\n",
         encoding="utf-8",
     )
-    assert main(["verify", "--spec", str(bad_spec_path), *sample_paths]) == 1
+    assert main(["verify", str(bad_spec_path), *sample_paths]) == 1
 
     # Only 1 sample to probe returns 1
     assert main(["probe", sample_paths[0]]) == 1
@@ -102,7 +105,7 @@ def test_cli_failure_exit_codes(tmp_path: Path) -> None:
     # Compile invalid YAML returns 1
     invalid_yaml = tmp_path / "invalid.yaml"
     invalid_yaml.write_text(":::bad_yaml:::", encoding="utf-8")
-    assert main(["compile", "--spec", str(invalid_yaml), "--target", "py"]) == 1
+    assert main(["compile", str(invalid_yaml), "--lang", "python"]) == 1
 
 
 def test_cli_entrypoint_subprocess_and_demo_script(tmp_path: Path) -> None:
@@ -123,3 +126,6 @@ def test_cli_entrypoint_subprocess_and_demo_script(tmp_path: Path) -> None:
         timeout=10,
     )
     assert proc_demo.returncode == 0
+    samples_dir = demo_script.parent / "samples"
+    for idx in (1, 2, 3):
+        assert (samples_dir / f"save_slot{idx}.sav").is_file()
