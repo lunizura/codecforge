@@ -204,6 +204,7 @@ def test_cpp_header_shadowing_safety_and_structure() -> None:
     assert "_cf_chunk_data" in hdr
     assert "codecforge_gen::read_u8" in hdr
     assert "codecforge_gen::crc32_ieee" in hdr
+    assert "reinterpret_cast" not in hdr
     # Ensure _cf_start_ / _cf_end_ are NOT emitted for non-CRC-covered fields (would fail -Wunused-variable)
     assert "_cf_start_crc32_ieee" not in hdr
     assert "_cf_end_crc32_ieee" not in hdr

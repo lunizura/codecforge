@@ -1,5 +1,6 @@
 # codecforge
 
+[![CI](https://github.com/lunizura/codecforge/actions/workflows/ci.yml/badge.svg)](https://github.com/lunizura/codecforge/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab)
 ![License: MIT](https://img.shields.io/badge/license-MIT-10b981)
 ![C++20](https://img.shields.io/badge/codegen-C%2B%2B20%20%7C%20Python%20%7C%20Kaitai-38bdf8)

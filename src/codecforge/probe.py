@@ -39,15 +39,19 @@ class LengthRelationCandidate:
     scalar_type: ScalarType
     target_kind: Literal["segment_index", "remaining_body", "total_file"]
     target_segment_index: int | None = None
+    has_trailing_cstr: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "sample0_offset": self.sample0_offset,
             "width": self.width,
             "scalar_type": self.scalar_type,
             "target_kind": self.target_kind,
             "target_segment_index": self.target_segment_index,
         }
+        if self.has_trailing_cstr:
+            out["has_trailing_cstr"] = True
+        return out
 
 
 @dataclass
@@ -392,6 +396,10 @@ def detect_lengths(
         if len(set(seg_lens)) < 2:
             continue
         min_seg_len = min(seg_lens)
+        all_end_nul = all(
+            ek > sk and work[k][ek - 1] == 0
+            for k, (sk, ek) in enumerate(seg.sample_slices)
+        )
         best_embedded: LengthRelationCandidate | None = None
         best_rel = 0
         best_end = 0
@@ -413,21 +421,36 @@ def detect_lengths(
                 if any(b in rule1_byte_offsets for b in range(s0_off, s0_off + width)):
                     continue
                 vals: list[int] = []
-                matched = True
+                exact_matched = True
+                cstr_tail_matched = all_end_nul
                 for k, w in enumerate(work):
                     sk, ek = seg.sample_slices[k]
                     val = struct.unpack_from(fmt, w, sk + rel)[0]
-                    if val != ek - (sk + rel + width):
-                        matched = False
+                    rem_after = ek - (sk + rel + width)
+                    if val != rem_after:
+                        exact_matched = False
+                    if cstr_tail_matched:
+                        cstr_start = sk + rel + width + val
+                        # Need at least 1 printable ASCII char + terminating NUL
+                        if cstr_start + 2 > ek:
+                            cstr_tail_matched = False
+                        else:
+                            cstr_body = w[cstr_start : ek - 1]
+                            if b"\x00" in cstr_body or not all(
+                                0x20 <= b <= 0x7E for b in cstr_body
+                            ):
+                                cstr_tail_matched = False
+                    if not exact_matched and not cstr_tail_matched:
                         break
                     vals.append(val)
-                if matched and len(set(vals)) >= 2:
+                if (exact_matched or cstr_tail_matched) and len(set(vals)) >= 2:
                     best_embedded = LengthRelationCandidate(
                         sample0_offset=s0_off,
                         width=width,
                         scalar_type=st,  # type: ignore[arg-type]
                         target_kind="segment_index",
                         target_segment_index=j,
+                        has_trailing_cstr=not exact_matched and cstr_tail_matched,
                     )
                     best_rel = rel
                     best_end = rel + width

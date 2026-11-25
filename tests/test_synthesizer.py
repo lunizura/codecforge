@@ -21,6 +21,7 @@ from codecforge.schema import CodecSpec, FieldSpec
 from codecforge.synthesizer import synthesize_codec, synthesize_heuristic
 from tests.fixtures import (
     make_fixed_header_samples,
+    make_net_packet_samples,
     make_rpg_save_samples,
     make_simple_save_samples,
 )
@@ -63,6 +64,25 @@ def test_heuristic_synthesizes_fixed_header_and_passes_oracle() -> None:
     assert oracle.passed, oracle.failures
     assert spec.fields[0].kind == "magic"
     assert spec.fields[-1].crc32_of is not None
+
+
+def test_heuristic_synthesizes_net_packet_be_and_passes_oracle() -> None:
+    samples, truth_spec = make_net_packet_samples()
+    spec, oracle = synthesize_codec(samples, provider_name="heuristic", name="net_packet")
+    assert oracle.passed, oracle.failures
+    assert spec.endian == "be"
+    assert spec.fields[0].kind == "magic"
+    assert spec.fields[0].magic_hex == "504B5431"
+    assert any(f.kind == "var_bytes" for f in spec.fields)
+    assert any(f.kind == "cstr" for f in spec.fields)
+    assert sum(1 for f in spec.fields if f.length_of is not None) == 2
+    assert spec.fields[-1].scalar_type == "u32be"
+    assert spec.fields[-1].crc32_of is not None
+
+    decoded, _ = decode_bytes(spec, samples[1])
+    truth_obj, _ = decode_bytes(truth_spec, samples[1])
+    assert any(v == truth_obj["tag"] for v in decoded.values())
+    assert any(v == truth_obj["payload"] for v in decoded.values())
 
 
 def test_mock_llm_multi_round_self_healing() -> None:

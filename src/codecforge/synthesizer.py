@@ -19,7 +19,13 @@ from codecforge.probe import (
     detect_lengths,
     probe_samples,
 )
-from codecforge.schema import CodecSpec, FieldSpec, ScalarType, validate_spec
+from codecforge.schema import (
+    SCALAR_STRUCT_FMT,
+    CodecSpec,
+    FieldSpec,
+    ScalarType,
+    validate_spec,
+)
 
 
 def _is_printable_utf8(raw: bytes) -> bool:
@@ -248,10 +254,17 @@ def synthesize_heuristic(
                     fields.append(len_f)
                     counter += 1
                     payload_off = rel + cand.width
-                    chunks = [
-                        work[k][s + payload_off : e]
-                        for k, (s, e) in enumerate(seg.sample_slices)
-                    ]
+                    if cand.has_trailing_cstr:
+                        len_fmt = SCALAR_STRUCT_FMT[cand.scalar_type][0]
+                        chunks = []
+                        for k, (s, _) in enumerate(seg.sample_slices):
+                            plen = struct.unpack_from(len_fmt, work[k], s + rel)[0]
+                            chunks.append(work[k][s + payload_off : s + payload_off + plen])
+                    else:
+                        chunks = [
+                            work[k][s + payload_off : e]
+                            for k, (s, e) in enumerate(seg.sample_slices)
+                        ]
                 else:
                     len_f = pending_seg_len_fields[idx]
                     chunks = [
@@ -278,6 +291,9 @@ def synthesize_heuristic(
                     )
                 len_f.length_of = payload_name
                 counter += 1
+                if cand.has_trailing_cstr:
+                    fields.append(FieldSpec(name=f"cstr_{counter}", kind="cstr"))
+                    counter += 1
             else:
                 chunks = [work[k][s:e] for k, (s, e) in enumerate(seg.sample_slices)]
                 if all(

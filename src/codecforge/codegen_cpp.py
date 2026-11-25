@@ -67,6 +67,19 @@ inline void _cf_require(bool cond, const char* msg) {
     }
 }
 
+inline std::string _cf_read_str_slice(
+    std::span<const std::uint8_t> buf,
+    std::size_t start,
+    std::size_t len
+) {
+    std::string out;
+    out.resize(len);
+    for (std::size_t i = 0; i < len; ++i) {
+        out[i] = static_cast<char>(buf[start + i]);
+    }
+    return out;
+}
+
 inline void _cf_check_ascii(const std::string& s, const char* field_name) {
     for (char ch : s) {
         if (static_cast<std::uint8_t>(ch) > 0x7Fu) {
@@ -518,7 +531,7 @@ def _emit_struct(
             )
             lines.append("        }")
             lines.append(
-                f"        _cf_obj.{f.name}.assign(reinterpret_cast<const char*>(_cf_buf.data() + _cf_pos), "
+                f"        _cf_obj.{f.name} = codecforge_gen::_cf_read_str_slice(_cf_buf, _cf_pos, "
                 f"_cf_pad_{f.name});"
             )
             if str_check_fn is not None:
@@ -535,7 +548,7 @@ def _emit_struct(
                 f'        codecforge_gen::_cf_require(_cf_nul_{f.name} < _cf_buf.size(), "Unterminated cstr {f.name}");'
             )
             lines.append(
-                f"        _cf_obj.{f.name}.assign(reinterpret_cast<const char*>(_cf_buf.data() + _cf_pos), "
+                f"        _cf_obj.{f.name} = codecforge_gen::_cf_read_str_slice(_cf_buf, _cf_pos, "
                 f"_cf_nul_{f.name} - _cf_pos);"
             )
             if str_check_fn is not None:
@@ -550,7 +563,7 @@ def _emit_struct(
                 f"        const std::size_t _cf_len_{f.name} = static_cast<std::size_t>(_cf_obj.{f.length_field});"
             )
             lines.append(
-                f"        _cf_obj.{f.name}.assign(reinterpret_cast<const char*>(_cf_buf.data() + _cf_pos), "
+                f"        _cf_obj.{f.name} = codecforge_gen::_cf_read_str_slice(_cf_buf, _cf_pos, "
                 f"_cf_len_{f.name});"
             )
             if str_check_fn is not None:
