@@ -7,6 +7,7 @@ from codecforge.errors import (
     SchemaValidationError,
     SynthesisError,
 )
+from codecforge.runtime import decode_bytes, encode_obj
 from codecforge.schema import (
     CodecSpec,
     FieldSpec,
@@ -27,4 +28,6 @@ __all__ = [
     "FieldSpec",
     "resolve_field_span",
     "validate_spec",
+    "decode_bytes",
+    "encode_obj",
 ]
