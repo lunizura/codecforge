@@ -7,6 +7,13 @@ from codecforge.errors import (
     SchemaValidationError,
     SynthesisError,
 )
+from codecforge.llm_client import (
+    GeminiInteractionsProvider,
+    LLMProvider,
+    OpenAICompatibleProvider,
+    ScriptedMockProvider,
+    extract_json_object,
+)
 from codecforge.oracle import OracleResult, verify_codec
 from codecforge.probe import (
     AlignedSegment,
@@ -26,6 +33,11 @@ from codecforge.schema import (
     FieldSpec,
     resolve_field_span,
     validate_spec,
+)
+from codecforge.synthesizer import (
+    synthesize_codec,
+    synthesize_heuristic,
+    synthesize_with_llm,
 )
 
 __version__ = "0.1.0"
@@ -55,4 +67,12 @@ __all__ = [
     "sliding_entropy",
     "OracleResult",
     "verify_codec",
+    "LLMProvider",
+    "GeminiInteractionsProvider",
+    "OpenAICompatibleProvider",
+    "ScriptedMockProvider",
+    "extract_json_object",
+    "synthesize_codec",
+    "synthesize_heuristic",
+    "synthesize_with_llm",
 ]
