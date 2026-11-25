@@ -337,7 +337,7 @@ def detect_lengths(
         for s in samples
     ]
     candidates: list[LengthRelationCandidate] = []
-    rule1a_offsets: set[int] = set()
+    rule1a_byte_offsets: set[int] = set()
     claimed_sample0_offsets: set[int] = set()
 
     # Rule 1a: Adjacent preceding length prefix before a shifted_var segment
@@ -370,7 +370,7 @@ def detect_lengths(
                     break
             if matched:
                 s0_off = prev.sample_slices[0][1] - width
-                rule1a_offsets.add(s0_off)
+                rule1a_byte_offsets.update(range(s0_off, s0_off + width))
                 claimed_sample0_offsets.add(s0_off)
                 candidates.append(
                     LengthRelationCandidate(
@@ -434,6 +434,7 @@ def detect_lengths(
 
     # Rule 2: Header remaining-body / total-file length field
     if len(set(len(s) for s in samples)) >= 2:
+        rule2_claimed_bytes: set[int] = set()
         for seg in segments:
             if seg.kind not in ("fixed_var", "shifted_var"):
                 continue
@@ -444,7 +445,7 @@ def detect_lengths(
             scan_limit = min(min_seg_len, 16 - s0_start)
             for rel in range(scan_limit):
                 s0_off = s0_start + rel
-                if s0_off in rule1a_offsets:
+                if s0_off in rule1a_byte_offsets or s0_off in rule2_claimed_bytes:
                     continue
                 for width, st, fmt in (
                     (2, "u16le", "<H"),
@@ -453,6 +454,11 @@ def detect_lengths(
                     (4, "u32be", ">I"),
                 ):
                     if rel + width > min_seg_len:
+                        continue
+                    if any(
+                        b in rule1a_byte_offsets or b in rule2_claimed_bytes
+                        for b in range(s0_off, s0_off + width)
+                    ):
                         continue
                     rem_match = True
                     tot_match = True
@@ -464,6 +470,7 @@ def detect_lengths(
                         if val != len(samples[k]):
                             tot_match = False
                     if rem_match:
+                        rule2_claimed_bytes.update(range(s0_off, s0_off + width))
                         candidates.append(
                             LengthRelationCandidate(
                                 sample0_offset=s0_off,
@@ -475,6 +482,7 @@ def detect_lengths(
                         )
                         break
                     if tot_match:
+                        rule2_claimed_bytes.update(range(s0_off, s0_off + width))
                         candidates.append(
                             LengthRelationCandidate(
                                 sample0_offset=s0_off,

@@ -128,3 +128,27 @@ def test_detect_lengths_rule1b_with_empty_var_str() -> None:
         and c.sample0_offset == 4
         for c in lens
     )
+
+
+def test_detect_lengths_rule2_u32be_does_not_emit_overlapping_u16be() -> None:
+    spec = CodecSpec(
+        name="be32_frame",
+        endian="be",
+        fields=[
+            FieldSpec(name="magic", kind="magic", magic_hex="46524D31"),
+            FieldSpec(name="body_len", kind="scalar", scalar_type="u32be", length_of="ver..msg"),
+            FieldSpec(name="ver", kind="scalar", scalar_type="u16be"),
+            FieldSpec(name="msg", kind="cstr"),
+        ],
+    )
+    samples = [
+        encode_obj(spec, {"ver": 1, "msg": "hi"}),
+        encode_obj(spec, {"ver": 2, "msg": "hello world"}),
+        encode_obj(spec, {"ver": 3, "msg": "testing123456"}),
+    ]
+    segs = align_samples(samples)
+    lens = detect_lengths(samples, segs)
+    rem_cands = [c for c in lens if c.target_kind == "remaining_body"]
+    assert len(rem_cands) == 1
+    assert rem_cands[0].sample0_offset == 4
+    assert rem_cands[0].scalar_type == "u32be"

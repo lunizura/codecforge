@@ -90,6 +90,17 @@ def test_generated_python_module_roundtrip_and_mutation(builder) -> None:
     assert ns["encode"](mut_re) == mut_bytes
 
 
+def test_generated_python_f32_overflow_raises_value_error() -> None:
+    spec = CodecSpec(
+        name="float_only",
+        fields=[FieldSpec(name="x", kind="scalar", scalar_type="f32le")],
+    )
+    ns: dict[str, Any] = {}
+    exec(compile(generate_python_module(spec), "<float_only>", "exec"), ns)
+    with pytest.raises(ValueError):
+        ns["encode"]({"x": 1e100})
+
+
 def test_generated_kaitai_ksy_valid_yaml() -> None:
     _, spec = make_rpg_save_samples()
     ksy_text = generate_kaitai_ksy(spec)

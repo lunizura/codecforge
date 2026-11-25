@@ -196,7 +196,7 @@ def _pack_scalar(f: FieldSpec, val: Any) -> bytes:
         val = float(val)
     try:
         return struct.pack(fmt, val)
-    except struct.error as exc:
+    except (struct.error, OverflowError) as exc:
         raise CodecEncodeError(f"Failed packing scalar '{f.name}': {exc}") from exc
 
 

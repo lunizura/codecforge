@@ -155,7 +155,10 @@ def _pack_scalar(f: dict[str, Any], val: Any) -> bytes:
         if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(float(val)):
             raise ValueError(f"Scalar '{{f['name']}}' expects finite float")
         val = float(val)
-    return struct.pack(fmt, val)
+    try:
+        return struct.pack(fmt, val)
+    except (struct.error, OverflowError) as exc:
+        raise ValueError(f"Failed packing scalar '{{f['name']}}': {{exc}}") from exc
 
 
 def _encode_fields(fields: list[dict[str, Any]], obj: dict[str, Any]) -> bytes:
